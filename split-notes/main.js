@@ -1,195 +1,521 @@
 "use strict";
 
-const obsidian = require("obsidian");
+/*
+ * Çift Not Görünümü — Obsidian "çekirdek eklenti" kalitesinde çift panel görüntüleyici
+ *
+ * Tasarım ilkeleri:
+ *  - Görünüm, çekirdek okuma modunun DOM'una ve sınıflarına yaslanır
+ *    (markdown-preview-view, clickable-icon, empty-state) — böylece her tema
+ *    onu çekirdek bir görünümmüş gibi stillendirir.
+ *  - Hiçbir sabit renk yok; yalnızca tema değişkenleri.
+ *  - Dosya yaşam döngüsü (düzenle / yeniden adlandır / sil) izlenir,
+ *    paneller canlı güncellenir.
+ */
+
+const {
+  Component,
+  FuzzySuggestModal,
+  ItemView,
+  MarkdownRenderer,
+  Menu,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  debounce,
+  setIcon
+} = require("obsidian");
 
 const VIEW_TYPE = "split-notes-view";
 
-/* ------------------------------------------------------------------ */
-/* Not seçici (FuzzySuggestModal) — çekirdek eklenti hissi veren arayüz */
-/* ------------------------------------------------------------------ */
-class NoteSuggestModal extends obsidian.FuzzySuggestModal {
+const DEFAULT_SETTINGS = {
+  splitDirection: "auto",   // auto | row | column
+  rememberNotes: true,      // son açılan notlar hatırlanır
+  syncScroll: false         // paneller oransal kaydırma senkronu
+};
+
+/* ================================================================== */
+/* Not seçici — çekirdek hızlı arama (FuzzySuggestModal)               */
+/* ================================================================== */
+class NoteSuggestModal extends FuzzySuggestModal {
   constructor(app, onPick) {
     super(app);
     this.onPick = onPick;
-    this.setPlaceholder("Not seç...");
+    this.setPlaceholder("Görüntülenecek notu seçin...");
   }
-
   getItems() {
     return this.app.vault.getMarkdownFiles();
   }
-
   getItemText(file) {
     return file.basename;
   }
-
   onChooseItem(file) {
     this.onPick(file);
   }
 }
 
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
 /* Ana görünüm                                                         */
-/* ------------------------------------------------------------------ */
-class SplitNotesView extends obsidian.ItemView {
+/* ================================================================== */
+class SplitNotesView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
-    this.leftFile = null;
-    this.rightFile = null;
-    this.renderers = { left: null, right: null };
+    this.files = { left: null, right: null };
+    this.components = { left: null, right: null };
+    this.scrolls = { left: null, right: null };
+    this.panes = {};
+    this.syncing = false;
   }
 
-  getViewType() {
-    return VIEW_TYPE;
-  }
-
-  getDisplayText() {
-    return "Çift Not Görünümü";
-  }
-
-  getIcon() {
-    return "columns-2";
-  }
+  getViewType() { return VIEW_TYPE; }
+  getDisplayText() { return "Çift not görünümü"; }
+  getIcon() { return "columns-2"; }
 
   async onOpen() {
-    this.containerEl.classList.add("split-notes-view-container");
+    const { settings } = this.plugin;
     this.contentEl.empty();
-    this.contentEl.addClass("split-notes-content");
+    this.contentEl.addClass("split-notes");
 
-    /* Üst bar: iki not seçici */
-    const header = this.contentEl.createDiv({ cls: "split-notes-header" });
+    /* Yön: kullanıcı seçimi varsa sınıfla sabitle, yoksa CSS'teki
+       medya sorgusu (dar ekran = alt alta) geçerli olur. */
+    if (settings.splitDirection === "row") this.contentEl.addClass("is-row");
+    if (settings.splitDirection === "column") this.contentEl.addClass("is-column");
 
-    const leftBtn = header.createEl("button", {
-      cls: "split-notes-picker",
-      text: "Not seç"
-    });
-    leftBtn.addEventListener("click", () => {
-      new NoteSuggestModal(this.app, (file) => this.setFile("left", file)).open();
-    });
-    this.leftPicker = leftBtn;
-
-    const swapBtn = header.createEl("button", {
-      cls: "split-notes-swap",
-      attr: { "aria-label": "Yerleri değiştir" }
-    });
-    obsidian.setIcon(swapBtn, "arrow-left-right");
-    swapBtn.addEventListener("click", () => this.swap());
-
-    const rightBtn = header.createEl("button", {
-      cls: "split-notes-picker",
-      text: "Not seç"
-    });
-    rightBtn.addEventListener("click", () => {
-      new NoteSuggestModal(this.app, (file) => this.setFile("right", file)).open();
-    });
-    this.rightPicker = rightBtn;
-
-    /* İki panel */
     this.panesEl = this.contentEl.createDiv({ cls: "split-notes-panes" });
+    this.buildPane("left");
+    this.buildPane("right");
 
-    this.leftPane = this.panesEl.createDiv({ cls: "split-notes-pane" });
-    this.leftPane.createDiv({ cls: "split-notes-pane-empty", text: "Soldaki not için \"Not seç\"e dokun" });
+    /* Canlı güncelleme: dosya düzenlenince paneli tazele */
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => this.refreshIfVisible(file))
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => this.onRename(file, oldPath))
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => this.onDelete(file))
+    );
 
-    this.rightPane = this.panesEl.createDiv({ cls: "split-notes-pane" });
-    this.rightPane.createDiv({ cls: "split-notes-pane-empty", text: "Sağdaki not için \"Not seç\"e dokun" });
+    /* Kaydedilmiş notları geri yükle */
+    if (settings.rememberNotes) await this.restoreState();
   }
 
   async onClose() {
-    Object.values(this.renderers).forEach((r) => r && r.unload());
+    for (const side of ["left", "right"]) {
+      if (this.components[side]) this.components[side].unload();
+    }
+    await this.saveState();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Panel inşası — çekirdek yaprak başlığı + okuma içeriği            */
+  /* ---------------------------------------------------------------- */
+  buildPane(side) {
+    const pane = this.panesEl.createDiv({ cls: "split-notes-pane" });
+    this.panes[side] = pane;
+
+    /* Yaprak başlığı: çekirdek .view-header görünümü */
+    const header = pane.createDiv({ cls: "split-notes-pane-header" });
+    const title = header.createDiv({
+      cls: "split-notes-pane-title",
+      text: "Not seçilmedi"
+    });
+    title.addEventListener("click", () => this.chooseFile(side));
+    title.setAttribute("aria-label", "Bu panel için not seç");
+    title.addClass("split-notes-pane-title-button");
+
+    const actions = header.createDiv({ cls: "split-notes-pane-actions" });
+
+    const editBtn = actions.createDiv({ cls: "clickable-icon" });
+    setIcon(editBtn, "pencil");
+    editBtn.setAttribute("aria-label", "Yeni sekmede aç");
+    editBtn.addEventListener("click", () => this.openInEditor(side));
+
+    const moreBtn = actions.createDiv({ cls: "clickable-icon" });
+    setIcon(moreBtn, "more-horizontal");
+    moreBtn.setAttribute("aria-label", "Diğer seçenekler");
+    moreBtn.addEventListener("click", (evt) => this.paneMenu(evt, side));
+    header.addEventListener("contextmenu", (evt) => this.paneMenu(evt, side));
+
+    /* İçerik: çekirdek okuma görünümü sınıfları — temalar burayı
+       sanki gerçek bir okuma yaprağıymış gibi stillendirir. */
+    const scrollEl = pane.createDiv({ cls: "split-notes-scroll" });
+    const previewEl = scrollEl.createDiv({ cls: "markdown-preview-view" });
+    this.scrolls[side] = scrollEl;
+
+    this.showEmptyState(side);
+    this.registerSyncScroll(side, scrollEl);
+  }
+
+  showEmptyState(side) {
+    const previewEl = this.panes[side].querySelector(".markdown-preview-view");
+    if (!previewEl) return;
+    previewEl.empty();
+    const empty = previewEl.createDiv({ cls: "empty-state" });
+    empty.createDiv({ cls: "empty-state-title", text: "Panel boş" });
+    empty.createDiv({
+      cls: "empty-state-content",
+      text: "Başlığa dokunarak görüntülenecek notu seçin."
+    });
+    this.setTitle(side, null);
+  }
+
+  setTitle(side, file) {
+    const title = this.panes[side].querySelector(".split-notes-pane-title");
+    if (title) title.setText(file ? file.basename : "Not seçilmedi");
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Not seçme / açma                                                  */
+  /* ---------------------------------------------------------------- */
+  chooseFile(side) {
+    new NoteSuggestModal(this.app, (file) => this.setFile(side, file)).open();
   }
 
   setFile(side, file) {
-    if (side === "left") this.leftFile = file;
-    else this.rightFile = file;
+    this.files[side] = file;
     this.renderPane(side);
+    void this.saveState();
+  }
+
+  async openInEditor(side) {
+    const file = this.files[side];
+    if (!file) return;
+    await this.app.workspace.openLinkText(file.path, "/", false);
   }
 
   swap() {
-    const f = this.leftFile;
-    this.leftFile = this.rightFile;
-    this.rightFile = f;
+    const f = this.files.left;
+    this.files.left = this.files.right;
+    this.files.right = f;
     this.renderPane("left");
     this.renderPane("right");
+    void this.saveState();
   }
 
-  async renderPane(side) {
-    const file = side === "left" ? this.leftFile : this.rightFile;
-    const picker = side === "left" ? this.leftPicker : this.rightPicker;
-    const pane = side === "left" ? this.leftPane : this.rightPane;
-
-    if (picker) picker.setText(file ? file.basename : "Not seç");
-    if (!file || !pane) return;
-
-    /* Önceki render bileşenini temizle */
-    if (this.renderers[side]) {
-      this.renderers[side].unload();
-      this.renderers[side] = null;
+  clearPane(side) {
+    this.files[side] = null;
+    if (this.components[side]) {
+      this.components[side].unload();
+      this.components[side] = null;
     }
-    pane.empty();
+    this.showEmptyState(side);
+    void this.saveState();
+  }
 
-    const scrollEl = pane.createDiv({ cls: "split-notes-scroll" });
-    const component = new obsidian.Component();
+  /* ---------------------------------------------------------------- */
+  /* Çekirdek sağ tık menüsü                                           */
+  /* ---------------------------------------------------------------- */
+  paneMenu(evt, side) {
+    const file = this.files[side];
+    const menu = new Menu();
+    if (file) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Yeni sekmede aç")
+          .setIcon("file-text")
+          .onClick(() => this.openInEditor(side))
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("Önbellekten yenile")
+          .setIcon("rotate-cw")
+          .onClick(() => this.renderPane(side))
+      );
+      menu.addSeparator();
+    }
+    menu.addItem((item) =>
+      item
+        .setTitle("Not seç...")
+        .setIcon("search")
+        .onClick(() => this.chooseFile(side))
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Panelleri değiştir")
+        .setIcon("arrow-left-right")
+        .onClick(() => this.swap())
+    );
+    if (file) {
+      menu.addSeparator();
+      menu.addItem((item) =>
+        item
+          .setTitle("Paneli temizle")
+          .setIcon("x")
+          .onClick(() => this.clearPane(side))
+      );
+    }
+    menu.showAtMouseEvent(evt);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Render — kaydırma konumunu koru                                   */
+  /* ---------------------------------------------------------------- */
+  async renderPane(side) {
+    const file = this.files[side];
+    this.setTitle(side, file);
+    const previewEl = this.panes[side].querySelector(".markdown-preview-view");
+    if (!previewEl) return;
+
+    if (this.components[side]) {
+      this.components[side].unload();
+      this.components[side] = null;
+    }
+
+    if (!file) {
+      this.showEmptyState(side);
+      return;
+    }
+
+    const previousScrollTop = this.scrolls[side].scrollTop;
+    previewEl.empty();
+    const sizer = previewEl.createDiv({ cls: "markdown-preview-sizer" });
+
+    const component = new Component();
     component.load();
-    this.renderers[side] = component;
+    this.components[side] = component;
 
     try {
       const content = await this.app.vault.cachedRead(file);
-      await obsidian.MarkdownRenderer.render(
+      await MarkdownRenderer.render(
         this.app,
         content,
-        scrollEl,
+        sizer,
         file.path,
         component
       );
-
-      /* Not linkleri bu görünümde de çalışsın */
-      scrollEl.addEventListener("click", (evt) => {
-        const target = evt.target instanceof HTMLElement ? evt.target : null;
-        const anchor = target && target.closest("a[data-href], a.internal-link");
-        if (!anchor) return;
-        evt.preventDefault();
-        const href = anchor.getAttribute("data-href") || anchor.getAttribute("href");
-        if (!href) return;
-        const dest = this.app.metadataCache.getFirstLinkpathDest(href, file.path);
-        if (dest) this.setFile(side, dest);
-        else new obsidian.Notice("Not bulunamadı: " + href);
-      });
+      this.wireLinks(side, previewEl, file);
+      this.scrolls[side].scrollTop = previousScrollTop;
     } catch (err) {
-      pane.setText("Not görüntülenemedi.");
-      console.error("split-notes:", err);
+      console.error("split-notes: render hatası", err);
+      new Notice("Not görüntülenemedi: " + file.path);
+      this.showEmptyState(side);
     }
+  }
+
+  /* İç linkler çekirdek davranışla açılır: hedef panelde gösterilir,
+     Shift/Cmd ile yeni sekmede açılır. */
+  wireLinks(side, el, sourceFile) {
+    el.on("click", "a.internal-link, a[data-href]", (evt, target) => {
+      evt.preventDefault();
+      const href = target.getAttribute("data-href") || target.getAttribute("href");
+      if (!href) return;
+      const dest = this.app.metadataCache.getFirstLinkpathDest(href, sourceFile.path);
+      if (!dest) {
+        new Notice("Not bulunamadı: " + href);
+        return;
+      }
+      if (evt.shiftKey || (evt.metaKey || evt.ctrlKey)) {
+        void this.app.workspace.openLinkText(dest.path, "/", false);
+      } else {
+        this.setFile(side, dest);
+      }
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Senkron kaydırma                                                   */
+  /* ---------------------------------------------------------------- */
+  registerSyncScroll(side, scrollEl) {
+    scrollEl.addEventListener("scroll", () => {
+      if (!this.plugin.settings.syncScroll || this.syncing) return;
+      const other = side === "left" ? "right" : "left";
+      const otherEl = this.scrolls[other];
+      if (!otherEl) return;
+      const ratio = scrollEl.scrollTop /
+        Math.max(1, scrollEl.scrollHeight - scrollEl.clientHeight);
+      this.syncing = true;
+      otherEl.scrollTop = ratio *
+        Math.max(1, otherEl.scrollHeight - otherEl.clientHeight);
+      this.syncing = false;
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Dosya yaşam döngüsü                                                */
+  /* ---------------------------------------------------------------- */
+  refreshIfVisible(file) {
+    for (const side of ["left", "right"]) {
+      if (this.files[side] && this.files[side].path === file.path) {
+        this.debouncedRender(side);
+      }
+    }
+  }
+
+  onRename(file, oldPath) {
+    for (const side of ["left", "right"]) {
+      if (this.files[side] && this.files[side].path === oldPath) {
+        this.files[side] = file;
+        this.setTitle(side, file);
+        void this.saveState();
+      }
+    }
+  }
+
+  onDelete(file) {
+    for (const side of ["left", "right"]) {
+      if (this.files[side] && this.files[side].path === file.path) {
+        this.clearPane(side);
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Durum kaydı                                                        */
+  /* ---------------------------------------------------------------- */
+  async saveState() {
+    if (!this.plugin.settings.rememberNotes) return;
+    const state = this.plugin.settings;
+    state.leftPath = this.files.left ? this.files.left.path : null;
+    state.rightPath = this.files.right ? this.files.right.path : null;
+    await this.plugin.saveSettings();
+  }
+
+  async restoreState() {
+    const { leftPath, rightPath } = this.plugin.settings;
+    if (leftPath) {
+      const f = this.app.vault.getAbstractFileByPath(leftPath);
+      if (f && f instanceof this.app.vault.adapter.constructor === false) {}
+      if (f && "basename" in f) this.setFile("left", f);
+    }
+    if (rightPath) {
+      const f = this.app.vault.getAbstractFileByPath(rightPath);
+      if (f && "basename" in f) this.setFile("right", f);
+    }
+  }
+
+  get debouncedRender() {
+    if (!this._debounced) {
+      this._debounced = {
+        left: debounce(() => this.renderPane("left"), 250, true),
+        right: debounce(() => this.renderPane("right"), 250, true)
+      };
+    }
+    return this._debounced;
   }
 }
 
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Ayarlar sekmesi — çekirdek eklenti ayar görünümü                    */
+/* ================================================================== */
+class SplitNotesSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("Panel yönü")
+      .setDesc("Panellerin yan yana mı, alt alta mı dizileceği.")
+      .addDropdown((drop) =>
+        drop
+          .addOptions({
+            auto: "Otomatik (dar ekranda alt alta)",
+            row: "Yan yana",
+            column: "Alt alta"
+          })
+          .setValue(this.plugin.settings.splitDirection)
+          .onChange(async (value) => {
+            this.plugin.settings.splitDirection = value;
+            await this.plugin.saveSettings();
+            this.plugin.applyLayout();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Son notları hatırla")
+      .setDesc("Görünüm yeniden açıldığında son görüntülenen notlar geri yüklenir.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.rememberNotes)
+          .onChange(async (value) => {
+            this.plugin.settings.rememberNotes = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Senkron kaydırma")
+      .setDesc("Bir panel kaydırıldığında diğeri aynı oranda kayar.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.syncScroll)
+          .onChange(async (value) => {
+            this.plugin.settings.syncScroll = value;
+            await this.plugin.saveSettings();
+          })
+      );
+  }
+}
+
+/* ================================================================== */
 /* Eklenti                                                             */
-/* ------------------------------------------------------------------ */
-class SplitNotesPlugin extends obsidian.Plugin {
+/* ================================================================== */
+class SplitNotesPlugin extends Plugin {
   async onload() {
+    await this.loadSettings();
+
     this.registerView(VIEW_TYPE, (leaf) => new SplitNotesView(leaf, this));
 
-    this.addRibbonIcon("columns-2", "Çift Not Görünümü", () => {
-      this.activateView();
+    this.addSettingTab(new SplitNotesSettingTab(this.app, this));
+
+    this.addRibbonIcon("columns-2", "Çift not görünümü", () => {
+      void this.activateView();
     });
 
     this.addCommand({
-      id: "open-split-notes",
+      id: "open",
       name: "Çift not görünümünü aç",
-      callback: () => this.activateView()
+      callback: () => void this.activateView()
     });
 
     this.addCommand({
-      id: "open-split-notes-with-active",
+      id: "open-with-active",
       name: "Aktif notu çift görünümde aç",
-      callback: () => this.activateViewWithActive()
+      callback: () => void this.activateViewWithActive()
     });
 
-    this.app.workspace.onLayoutReady(() => this.restoreLastNotes());
+    this.addCommand({
+      id: "swap",
+      name: "Panellerin yerini değiştir",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.swap();
+        return true;
+      }
+    });
   }
 
   onunload() {
-    /* Görünümü kapatınca leaf'i bırak */
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
+  }
+
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
+
+  /* Yön ayarı değişince açık görünümü anında güncelle */
+  applyLayout() {
+    const view = this.getActiveView();
+    if (!view) return;
+    view.contentEl.removeClass("is-row", "is-column");
+    if (this.settings.splitDirection === "row") view.contentEl.addClass("is-row");
+    if (this.settings.splitDirection === "column") view.contentEl.addClass("is-column");
+  }
+
+  getActiveView() {
+    const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+    return leaf && leaf.view instanceof SplitNotesView ? leaf.view : null;
   }
 
   async activateView() {
@@ -207,11 +533,6 @@ class SplitNotesPlugin extends obsidian.Plugin {
     const view = await this.activateView();
     const file = this.app.workspace.getActiveFile();
     if (file) view.setFile("left", file);
-  }
-
-  restoreLastNotes() {
-    /* Klasördeki son açılan iki not varsa otomatik doldur */
-    this.app.workspace.iterateAllLeaves(() => {});
   }
 }
 
