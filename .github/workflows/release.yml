@@ -1,0 +1,37 @@
+name: Release Split Notes plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read plugin version
+        id: ver
+        run: echo "version=$(jq -r .version split-notes/manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare BRAT release assets
+        run: |
+          mkdir -p release
+          cp split-notes/manifest.json split-notes/main.js split-notes/styles.css release/
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: split-notes-${{ steps.ver.outputs.version }}
+          name: "Çift Not Görünümü ${{ steps.ver.outputs.version }}"
+          body: |
+            Mobilde ve masaüstünde iki notu aynı anda görüntüleyen, temalara duyarlı Obsidian eklentisi.
+
+            **BRAT ile kurulum:** Obsidian'da BRAT > Add Beta plugin > `halisihub/obsi` yazın.
+          artifacts: "release/manifest.json,release/main.js,release/styles.css"
+          allowUpdates: true
+          makeLatest: true
