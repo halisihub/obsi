@@ -1,7 +1,10 @@
-/* Çift Not Görünümü — çekirdek görünümle uyumlu stiller.
-   Mümkün olduğunca çekirdek sınıflara (markdown-preview-view, clickable-icon,
-   empty-state) yaslanılır; burada yalnızca yerleşim ve tema değişkenleri kullanılır. */
+/* Çift Not Görünümü — sıkışık yerleşim, çekirdek uyumlu.
+   Sorunlar bu sürümde giderildi:
+   - gereksiz dış dolgular kaldırıldı (boş alan problemi)
+   - mobilde alt nav çubuğu içeriğin üstüne binmesin diye güvenli alan eklendi
+   - panel başlıkları kompaktlaştırıldı */
 
+/* Dış dolgu yok: görünüm tüm alanı kaplar, paneller arası yalnızca ince çizgi */
 .split-notes {
   display: flex;
   flex-direction: column;
@@ -13,11 +16,11 @@
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
-  gap: var(--size-4-2);
-  padding: var(--size-4-2);
+  gap: 1px;
+  padding: 0;
 }
 
-/* Panel: çekirdek workspace yaprağı gibi çerçeveli */
+/* Panel: çerçeve yerine çekirdek yaprak bölmesi gibi ayırıcı */
 .split-notes-pane {
   flex: 1 1 0;
   min-width: 0;
@@ -25,19 +28,27 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
   background: var(--background-primary);
 }
 
-/* Panel başlığı — çekirdek .view-header hissi */
+.split-notes-pane + .split-notes-pane {
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+/* Dikey yerleşimde ayırıcı üstte olur */
+.split-notes.is-column .split-notes-pane + .split-notes-pane,
+.split-notes-panes:not(.is-row) .split-notes-pane + .split-notes-pane {
+  border-left: none;
+}
+
+/* Kompakt panel başlığı — çekirdek sekmelerin yüksekliğiyle uyumlu */
 .split-notes-pane-header {
   display: flex;
   align-items: center;
-  gap: var(--size-2-2);
+  gap: var(--size-2-1);
   flex: 0 0 auto;
-  height: var(--header-height);
-  padding: 0 var(--size-4-2);
+  height: var(--input-height);
+  padding: 0 var(--size-2-3);
   border-bottom: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
   user-select: none;
@@ -50,7 +61,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: var(--font-ui-small);
+  font-size: var(--font-ui-smaller);
   font-weight: var(--font-medium);
 }
 
@@ -66,11 +77,16 @@
 .split-notes-pane-actions {
   display: flex;
   align-items: center;
-  gap: var(--size-1-2);
+  gap: 0;
 }
 
-/* İçerik: çekirdek okuma görünümü sınıflarıyla sarılır, temalar
-   burayı otomatik olarak çekirdek okuma modu gibi stillendirir. */
+/* İkon düğmeleri kompakt: çekirdek clickable-icon boyutları */
+.split-notes-pane-actions .clickable-icon {
+  padding: var(--size-2-1) var(--size-2-2);
+}
+
+/* İçerik: çekirdek okuma görünümü sınıflarıyla sarılır.
+   file-margins yerine kompakt dolgu — ekran alanı kazanımı. */
 .split-notes-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -78,40 +94,55 @@
 }
 
 .split-notes .markdown-preview-view {
-  padding: var(--file-margins);
+  padding: var(--size-4-2) var(--size-4-3);
 }
 
-/* Boş durum — çekirdek empty-state sınıflarıyla uyum */
+.split-notes .markdown-preview-sizer {
+  max-width: 100%;
+}
+
+/* Boş durum — kompakt */
 .split-notes .empty-state {
-  margin-top: var(--size-4-8);
+  margin-top: var(--size-4-4);
   text-align: center;
 }
 
 .split-notes .empty-state-title {
   color: var(--text-faint);
-  font-size: var(--font-ui-large);
+  font-size: var(--font-ui-medium);
   font-weight: var(--font-bold);
-  padding-bottom: var(--size-2-3);
+  padding-bottom: var(--size-2-2);
 }
 
 .split-notes .empty-state-content {
   color: var(--text-faint);
-  font-size: var(--font-ui-small);
+  font-size: var(--font-ui-smaller);
 }
 
 /* Yön seçimi (ayarlar) */
 .split-notes.is-row .split-notes-panes {
   flex-direction: row;
-  flex-wrap: nowrap;
 }
 
 .split-notes.is-column .split-notes-panes {
   flex-direction: column;
 }
 
+/* Mobil: alt nav çubuğu ve güvenli alan (iOS home göstergesi)
+   içeriğin üstüne binmesin. Obsidian mobilde body'ye .is-mobile ekler. */
+body.is-mobile .split-notes .markdown-preview-view {
+  padding: var(--size-4-2) var(--size-4-3) calc(var(--size-4-8) + env(safe-area-inset-bottom, 0px)) var(--size-4-3);
+}
+
 /* Otomatik: dar ekranda alt alta */
 @media (max-width: 600px) {
   .split-notes-panes {
     flex-direction: column;
+  }
+
+  /* Dikey yerleşimde paneller arası üst ayırıcı */
+  .split-notes-panes .split-notes-pane + .split-notes-pane {
+    border-left: none;
+    border-top: 1px solid var(--background-modifier-border);
   }
 }
