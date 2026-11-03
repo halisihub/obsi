@@ -31,7 +31,9 @@ const VIEW_TYPE = "split-notes-view";
 const DEFAULT_SETTINGS = {
   splitDirection: "auto",   // auto | row | column
   rememberNotes: true,      // son açılan notlar hatırlanır
-  syncScroll: false,        // paneller oransal kaydırma senkronu
+  syncScroll: false,        // senkron kaydırma açık/kapalı
+  syncScrollMode: "delta",  // delta: aynı mesafe | proportional: aynı oran
+  linkTarget: "other",      // other: bağlantı diğer panelde açılır | same: aynı panelde
   hidePaneHeadersInFullscreen: false // gerçek tam ekran: panel başlıkları da gizlenir
 };
 
@@ -69,6 +71,8 @@ class SplitNotesView extends ItemView {
     // Programatik olarak kaydırılan panel için beklenen konum. Böylece
     // tarayıcının daha sonra gönderdiği scroll olayı geri döngü oluşturmaz.
     this.programmaticScrolls = { left: null, right: null };
+    // Senkron kaydırma için her panelin son konumu (delta hesabı)
+    this.lastScrollTops = { left: 0, right: 0 };
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -396,7 +400,12 @@ class SplitNotesView extends ItemView {
       if (evt.shiftKey || (evt.metaKey || evt.ctrlKey)) {
         void this.app.workspace.openLinkText(dest.path, "/", false);
       } else {
-        this.setFile(side, dest);
+        /* Ayara göre: aynı panelde ya da diğer panelde aç */
+        const targetSide =
+          this.plugin.settings.linkTarget === "other"
+            ? (side === "left" ? "right" : "left")
+            : side;
+        this.setFile(targetSide, dest);
       }
     });
   }
@@ -405,7 +414,14 @@ class SplitNotesView extends ItemView {
   /* Senkron kaydırma                                                   */
   /* ---------------------------------------------------------------- */
   registerSyncScroll(side, scrollEl) {
+    this.lastScrollTops[side] = 0;
+
     scrollEl.addEventListener("scroll", () => {
+      /* Delta: bu kaydırma olayında ne kadar ilerledik */
+      const prevTop = this.lastScrollTops[side];
+      const delta = scrollEl.scrollTop - prevTop;
+      this.lastScrollTops[side] = scrollEl.scrollTop;
+
       const pending = this.programmaticScrolls[side];
       if (pending) {
         window.clearTimeout(pending.timeout);
@@ -420,12 +436,19 @@ class SplitNotesView extends ItemView {
       const otherEl = this.scrolls[other];
       if (!otherEl) return;
 
-      const sourceMax = scrollEl.scrollHeight - scrollEl.clientHeight;
-      const targetMax = otherEl.scrollHeight - otherEl.clientHeight;
-      if (sourceMax <= 0 || targetMax <= 0) return;
-
-      const ratio = Math.min(1, Math.max(0, scrollEl.scrollTop / sourceMax));
-      const targetTop = ratio * targetMax;
+      let targetTop;
+      if (this.plugin.settings.syncScrollMode === "delta") {
+        /* Aynı mesafe: ne kadar kaydırırsan diğer panel o kadar kayar */
+        const targetMax = Math.max(0, otherEl.scrollHeight - otherEl.clientHeight);
+        targetTop = Math.min(Math.max(0, otherEl.scrollTop + delta), targetMax);
+      } else {
+        /* Aynı oran: uzun/kısa notlarda oransal konum korunur */
+        const sourceMax = scrollEl.scrollHeight - scrollEl.clientHeight;
+        const targetMax = otherEl.scrollHeight - otherEl.clientHeight;
+        if (sourceMax <= 0 || targetMax <= 0) return;
+        const ratio = Math.min(1, Math.max(0, scrollEl.scrollTop / sourceMax));
+        targetTop = ratio * targetMax;
+      }
       const oldPending = this.programmaticScrolls[other];
       if (oldPending) window.clearTimeout(oldPending.timeout);
 
@@ -438,6 +461,7 @@ class SplitNotesView extends ItemView {
         }
       }, 150);
       this.programmaticScrolls[other] = pendingTarget;
+      this.lastScrollTops[other] = targetTop;
       otherEl.scrollTop = targetTop;
     }, { passive: true });
   }
@@ -556,6 +580,38 @@ class SplitNotesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.syncScroll)
           .onChange(async (value) => {
             this.plugin.settings.syncScroll = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Senkron kaydırma türü")
+      .setDesc("Aynı mesafe: ne kadar kaydırırsan diğer panel de o kadar kayar. Aynı oran: paneller oransal konumda eşlenir (uzun/kısa not uyumu).")
+      .addDropdown((drop) =>
+        drop
+          .addOptions({
+            delta: "Aynı mesafe (ne kadar kaydırsan o kadar)",
+            proportional: "Aynı oran (oransal konum)"
+          })
+          .setValue(this.plugin.settings.syncScrollMode)
+          .onChange(async (value) => {
+            this.plugin.settings.syncScrollMode = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Bağlantı hedefi")
+      .setDesc("Bir nottaki bağlantıya dokunduğunda hedef not nerede açılsın?")
+      .addDropdown((drop) =>
+        drop
+          .addOptions({
+            other: "Diğer panelde aç",
+            same: "Aynı panelde aç"
+          })
+          .setValue(this.plugin.settings.linkTarget)
+          .onChange(async (value) => {
+            this.plugin.settings.linkTarget = value;
             await this.plugin.saveSettings();
           })
       );
