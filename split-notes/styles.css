@@ -179,32 +179,37 @@ body.split-notes-fullscreen .split-notes-scroll {
   border-radius: 0;
 }
 
-/* Tam ekrandan çıkış: sağ üstte küçük, yarı saydam düğme.
-   Yalnızca tam ekrandayken görünür. */
-.split-notes-exit {
+
+/* Gerçek tam ekran: panel başlıkları da gizlenir; ekranda yalnızca
+   iki not, kenardan kenara tüm ekranı kaplar. */
+body.split-notes-fullscreen .split-notes.is-chromeless .split-notes-pane-header {
   display: none;
-  position: absolute;
-  top: var(--size-2-2);
-  right: var(--size-2-2);
-  z-index: 20;
-  opacity: 0.35;
-  border-radius: 50%;
-  padding: var(--size-2-2);
-  color: var(--text-muted);
-  background: var(--background-secondary);
 }
 
-body.split-notes-fullscreen .split-notes-exit {
+body.split-notes-fullscreen .split-notes.is-chromeless .split-notes-pane {
+  border: none;
+  border-radius: 0;
+}
+
+/* Paneller tüm dikey alanı kaplasın: başlık gizlenince de kaybolmasın */
+.workspace-leaf-content[data-type="split-notes-view"] .view-content {
+  padding: 0;
   display: flex;
 }
 
-.split-notes-exit.is-on,
-body.split-notes-fullscreen .split-notes-exit {
-  display: flex;
+.split-notes {
+  height: 100%;
+  min-height: 0;
 }
 
-.split-notes-exit:hover {
-  opacity: 1;
-  color: var(--text-normal);
-  background: var(--background-secondary);
+.split-notes-panes {
+  min-height: 0;
+}
+
+.split-notes-pane {
+  min-height: 0;
+}
+
+.split-notes-scroll {
+  min-height: 0;
 }
