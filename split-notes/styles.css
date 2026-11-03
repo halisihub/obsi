@@ -1,99 +1,117 @@
-/* Çift Not Görünümü — tema değişkenleriyle uyumlu stiller */
+/* Çift Not Görünümü — çekirdek görünümle uyumlu stiller.
+   Mümkün olduğunca çekirdek sınıflara (markdown-preview-view, clickable-icon,
+   empty-state) yaslanılır; burada yalnızca yerleşim ve tema değişkenleri kullanılır. */
 
-.split-notes-view-container .view-header {
-  /* Çekirdek eklenti görünümüyle aynı başlık hissi */
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.split-notes-content {
+.split-notes {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: var(--size-4-2);
-  gap: var(--size-4-2);
   background: var(--background-primary);
-}
-
-.split-notes-header {
-  display: flex;
-  align-items: center;
-  gap: var(--size-2-2);
-  padding: var(--size-2-2);
-  border-radius: var(--radius-m);
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-}
-
-.split-notes-header button {
-  box-shadow: none;
-}
-
-.split-notes-picker {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: var(--interactive-normal);
-  color: var(--text-normal);
-}
-
-.split-notes-picker:hover {
-  background: var(--interactive-hover);
-}
-
-.split-notes-swap {
-  flex: 0 0 auto;
-  background: var(--interactive-normal);
-  color: var(--text-muted);
-}
-
-.split-notes-swap:hover {
-  background: var(--interactive-hover);
-  color: var(--text-normal);
 }
 
 .split-notes-panes {
   flex: 1 1 auto;
   display: flex;
-  gap: var(--size-4-2);
   min-height: 0;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2);
 }
 
+/* Panel: çekirdek workspace yaprağı gibi çerçeveli */
 .split-notes-pane {
   flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   background: var(--background-primary);
 }
 
-.split-notes-scroll {
-  height: 100%;
-  overflow-y: auto;
-  padding: var(--file-margins);
-  font-size: var(--font-text-size);
-  line-height: var(--line-height-normal);
-}
-
-.split-notes-pane-empty {
+/* Panel başlığı — çekirdek .view-header hissi */
+.split-notes-pane-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: var(--size-4-3);
-  color: var(--text-faint);
+  gap: var(--size-2-2);
+  flex: 0 0 auto;
+  height: var(--header-height);
+  padding: 0 var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  user-select: none;
+}
+
+.split-notes-pane-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+}
+
+.split-notes-pane-title-button {
+  cursor: pointer;
+  color: var(--text-normal);
+}
+
+.split-notes-pane-title-button:hover {
+  color: var(--text-accent);
+}
+
+.split-notes-pane-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--size-1-2);
+}
+
+/* İçerik: çekirdek okuma görünümü sınıflarıyla sarılır, temalar
+   burayı otomatik olarak çekirdek okuma modu gibi stillendirir. */
+.split-notes-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.split-notes .markdown-preview-view {
+  padding: var(--file-margins);
+}
+
+/* Boş durum — çekirdek empty-state sınıflarıyla uyum */
+.split-notes .empty-state {
+  margin-top: var(--size-4-8);
   text-align: center;
 }
 
-/* Dar ekranlarda (telefon) paneller alt alta geçer */
+.split-notes .empty-state-title {
+  color: var(--text-faint);
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-bold);
+  padding-bottom: var(--size-2-3);
+}
+
+.split-notes .empty-state-content {
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+/* Yön seçimi (ayarlar) */
+.split-notes.is-row .split-notes-panes {
+  flex-direction: row;
+  flex-wrap: nowrap;
+}
+
+.split-notes.is-column .split-notes-panes {
+  flex-direction: column;
+}
+
+/* Otomatik: dar ekranda alt alta */
 @media (max-width: 600px) {
   .split-notes-panes {
     flex-direction: column;
-  }
-
-  .split-notes-header {
-    flex-wrap: wrap;
   }
 }
