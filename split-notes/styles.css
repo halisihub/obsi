@@ -141,3 +141,70 @@ body.is-mobile .split-notes .markdown-preview-view {
     flex-direction: column;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Tam ekran modu — ekranda yalnızca iki panel                         */
+/* ------------------------------------------------------------------ */
+
+/* Tüm üst/alt çubukları gizle: sekmeler, mobil alt menü, durum
+   çubuğu, masaüstü ribbon ve görünüm başlıkları. */
+body.split-notes-fullscreen .mobile-navbar,
+body.split-notes-fullscreen .mobile-toolbar,
+body.split-notes-fullscreen .status-bar,
+body.split-notes-fullscreen .workspace-tab-header-container,
+body.split-notes-fullscreen .workspace-ribbon,
+body.split-notes-fullscreen .workspace-sidedock,
+body.split-notes-fullscreen .view-header {
+  display: none !important;
+}
+
+/* Paneller tüm ekranı kaplasın: boşluksuz, köşesiz, tam kenar */
+body.split-notes-fullscreen .split-notes-panes {
+  padding: 0;
+  gap: 1px;
+}
+
+body.split-notes-fullscreen .split-notes-pane {
+  border: none;
+  border-radius: 0;
+}
+
+body.split-notes-fullscreen .split-notes-pane-header {
+  border-radius: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+body.split-notes-fullscreen .split-notes-scroll {
+  border-radius: 0;
+}
+
+/* Tam ekrandan çıkış: sağ üstte küçük, yarı saydam düğme.
+   Yalnızca tam ekrandayken görünür. */
+.split-notes-exit {
+  display: none;
+  position: absolute;
+  top: var(--size-2-2);
+  right: var(--size-2-2);
+  z-index: 20;
+  opacity: 0.35;
+  border-radius: 50%;
+  padding: var(--size-2-2);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+}
+
+body.split-notes-fullscreen .split-notes-exit {
+  display: flex;
+}
+
+.split-notes-exit.is-on,
+body.split-notes-fullscreen .split-notes-exit {
+  display: flex;
+}
+
+.split-notes-exit:hover {
+  opacity: 1;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+}
