@@ -65,8 +65,9 @@ class SplitNotesView extends ItemView {
     this.components = { left: null, right: null };
     this.scrolls = { left: null, right: null };
     this.panes = {};
-    this.syncing = false;
-    this.syncFrame = null;
+    // Programatik olarak kaydırılan panel için beklenen konum. Böylece
+    // tarayıcının daha sonra gönderdiği scroll olayı geri döngü oluşturmaz.
+    this.programmaticScrolls = { left: null, right: null };
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -105,6 +106,8 @@ class SplitNotesView extends ItemView {
   async onClose() {
     for (const side of ["left", "right"]) {
       if (this.components[side]) this.components[side].unload();
+      const pending = this.programmaticScrolls[side];
+      if (pending) window.clearTimeout(pending.timeout);
     }
     await this.saveState();
   }
@@ -139,8 +142,8 @@ class SplitNotesView extends ItemView {
     moreBtn.addEventListener("click", (evt) => this.paneMenu(evt, side));
     header.addEventListener("contextmenu", (evt) => this.paneMenu(evt, side));
 
-    /* İçerik: çekirdek okuma görünümü sınıfları — temalar burayı
-       sanki gerçek bir okuma yaprağıymış gibi stillendirir. */
+    /* İçerik: scroll alanı dış sarmalayıcıdır; markdown preview kendi
+       başına kaydırmaz (styles.css). */
     const scrollEl = pane.createDiv({ cls: "split-notes-scroll" });
     const previewEl = scrollEl.createDiv({ cls: "markdown-preview-view" });
     this.scrolls[side] = scrollEl;
@@ -320,7 +323,15 @@ class SplitNotesView extends ItemView {
   /* ---------------------------------------------------------------- */
   registerSyncScroll(side, scrollEl) {
     scrollEl.addEventListener("scroll", () => {
-      if (!this.plugin.settings.syncScroll || this.syncing) return;
+      const pending = this.programmaticScrolls[side];
+      if (pending) {
+        window.clearTimeout(pending.timeout);
+        this.programmaticScrolls[side] = null;
+        // Hedef panelin programatik scroll olayıdır; geri senkronlama.
+        if (Math.abs(scrollEl.scrollTop - pending.top) < 2) return;
+      }
+
+      if (!this.plugin.settings.syncScroll) return;
 
       const other = side === "left" ? "right" : "left";
       const otherEl = this.scrolls[other];
@@ -331,17 +342,21 @@ class SplitNotesView extends ItemView {
       if (sourceMax <= 0 || targetMax <= 0) return;
 
       const ratio = Math.min(1, Math.max(0, scrollEl.scrollTop / sourceMax));
-      this.syncing = true;
-      otherEl.scrollTop = ratio * targetMax;
+      const targetTop = ratio * targetMax;
+      const oldPending = this.programmaticScrolls[other];
+      if (oldPending) window.clearTimeout(oldPending.timeout);
 
-      if (this.syncFrame !== null) {
-        cancelAnimationFrame(this.syncFrame);
-      }
-      this.syncFrame = requestAnimationFrame(() => {
-        this.syncing = false;
-        this.syncFrame = null;
-      });
-    });
+      const pendingTarget = { top: targetTop, timeout: null };
+      // Scroll olayı bazı durumlarda (aynı konum/arka plan) gönderilmeyebilir;
+      // zaman aşımı, işaretin sonraki gerçek kullanıcı kaydırmasını yutmasını önler.
+      pendingTarget.timeout = window.setTimeout(() => {
+        if (this.programmaticScrolls[other] === pendingTarget) {
+          this.programmaticScrolls[other] = null;
+        }
+      }, 150);
+      this.programmaticScrolls[other] = pendingTarget;
+      otherEl.scrollTop = targetTop;
+    }, { passive: true });
   }
 
   /* ---------------------------------------------------------------- */
