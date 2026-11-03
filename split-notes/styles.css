@@ -85,12 +85,20 @@
   padding: var(--size-2-1) var(--size-2-2);
 }
 
-/* İçerik: çekirdek okuma görünümü sınıflarıyla sarılır.
-   file-margins yerine kompakt dolgu — ekran alanı kazanımı. */
+/* Panelin tek scroll container'ı bu dış sarmalayıcıdır. */
 .split-notes-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Obsidian'ın markdown-preview-view varsayılan overflow/height ayarlarını
+   geçersiz kıl: içerik sarmalayıcıyı büyütsün, kaydırmayı sarmalayıcı yapsın. */
+.split-notes-scroll > .markdown-preview-view {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
 }
 
 .split-notes .markdown-preview-view {
@@ -129,7 +137,7 @@
 }
 
 /* Mobil: alt nav çubuğu ve güvenli alan (iOS home göstergesi)
-   içeriğin üstüne binmesin. Obsidian mobilde body'ye .is-mobile ekler. */
+   içeriğin üstüne binmesin. Obsidian mobilde body'ye .is-mobile eklenir. */
 body.is-mobile .split-notes .markdown-preview-view {
   padding: var(--size-4-2) var(--size-4-3) calc(var(--size-4-8) + env(safe-area-inset-bottom, 0px)) var(--size-4-3);
 }
