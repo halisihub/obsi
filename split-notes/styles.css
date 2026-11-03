@@ -213,3 +213,35 @@ body.split-notes-fullscreen .split-notes.is-chromeless .split-notes-pane {
 .split-notes-scroll {
   min-height: 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* Tam ekranda üst boşluk: tüm kapsayıcıları sıfırla                  */
+/* ------------------------------------------------------------------ */
+
+/* Masaüstü başlık çubuğu ve iOS güvenli alan dolguları dahil */
+body.split-notes-fullscreen .titlebar {
+  display: none !important;
+}
+
+body.split-notes-fullscreen .app-container {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Workspace katmanlarındaki tüm dolgu/kenar boşlukları sıfırla;
+   gizlenen başlıkların bıraktığı boş alan böyle tamamen kapanır. */
+body.split-notes-fullscreen .workspace,
+body.split-notes-fullscreen .workspace-split,
+body.split-notes-fullscreen .workspace-tabs,
+body.split-notes-fullscreen .workspace-tab-container,
+body.split-notes-fullscreen .workspace-leaf,
+body.split-notes-fullscreen .workspace-leaf-content,
+body.split-notes-fullscreen .view-content {
+  padding: 0 !important;
+  margin: 0 !important;
+  height: 100% !important;
+}
+
+body.split-notes-fullscreen .view-content {
+  height: 100% !important;
+}
