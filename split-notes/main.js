@@ -376,7 +376,6 @@ class SplitNotesView extends ItemView {
     const { leftPath, rightPath } = this.plugin.settings;
     if (leftPath) {
       const f = this.app.vault.getAbstractFileByPath(leftPath);
-      if (f && f instanceof this.app.vault.adapter.constructor === false) {}
       if (f && "basename" in f) this.setFile("left", f);
     }
     if (rightPath) {
