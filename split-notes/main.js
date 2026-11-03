@@ -31,7 +31,8 @@ const VIEW_TYPE = "split-notes-view";
 const DEFAULT_SETTINGS = {
   splitDirection: "auto",   // auto | row | column
   rememberNotes: true,      // son açılan notlar hatırlanır
-  syncScroll: false         // paneller oransal kaydırma senkronu
+  syncScroll: false,        // paneller oransal kaydırma senkronu
+  hidePaneHeadersInFullscreen: false // gerçek tam ekran: panel başlıkları da gizlenir
 };
 
 /* ================================================================== */
@@ -94,20 +95,17 @@ class SplitNotesView extends ItemView {
       this.plugin.settings.syncScroll = !this.plugin.settings.syncScroll;
       void this.plugin.saveSettings();
       this.updateSyncButton();
+    });
+    this.updateSyncButton();
 
     /* Çekirdek görünüm başlığı düğmesi: tam ekran */
     this.fsBtn = this.addAction("maximize-2", "Tam ekran", () => {
       this.toggleFullscreen();
     });
 
-    /* Tam ekrandan çıkmak için köşede küçük yüzen düğme
-       (tam ekranda tüm başlıklar gizlenir). */
-    this.exitBtnEl = this.contentEl.createDiv({ cls: "split-notes-exit clickable-icon" });
-    setIcon(this.exitBtnEl, "minimize-2");
-    this.exitBtnEl.setAttribute("aria-label", "Tam ekrandan çık");
-    this.exitBtnEl.addEventListener("click", () => this.toggleFullscreen());
-    });
-    this.updateSyncButton();
+    /* Tam ekrandan çıkış: iki parmakla küçültme (pinch-in) hareketi,
+       masaüstünde Esc tuşu. Yüzen düğme YOK. */
+    this.registerFullscreenGestures();
 
     /* Canlı güncelleme: dosya düzenlenince paneli tazele */
     this.registerEvent(
@@ -149,7 +147,52 @@ class SplitNotesView extends ItemView {
     const on = !document.body.classList.contains("split-notes-fullscreen");
     document.body.classList.toggle("split-notes-fullscreen", on);
     if (this.fsBtn) this.fsBtn.classList.toggle("is-on", on);
-    if (this.exitBtnEl) this.exitBtnEl.classList.toggle("is-on", on);
+    this.applyChromeless(on);
+  }
+
+  /* Gerçek tam ekran: panel başlıkları da gizlenir (ayar) */
+  applyChromeless(on) {
+    const chromeless = on && this.plugin.settings.hidePaneHeadersInFullscreen;
+    this.contentEl.toggleClass("is-chromeless", chromeless);
+  }
+
+  /* Çıkış hareketleri: pinch-in (mobil) ve Esc (masaüstü) */
+  registerFullscreenGestures() {
+    let pinchStart = null;
+
+    this.registerDomEvent(this.contentEl, "touchstart", (evt) => {
+      if (evt.touches.length === 2) {
+        const a = evt.touches[0];
+        const b = evt.touches[1];
+        pinchStart = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      }
+    }, { passive: true });
+
+    this.registerDomEvent(this.contentEl, "touchmove", (evt) => {
+      if (pinchStart === null || evt.touches.length !== 2) return;
+      const a = evt.touches[0];
+      const b = evt.touches[1];
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      /* Belirgin küçültme: parmaklar yarı mesafeye yakınlaştıysa çık */
+      if (dist < pinchStart * 0.5 && pinchStart > 100) {
+        pinchStart = null;
+        if (document.body.classList.contains("split-notes-fullscreen")) {
+          this.toggleFullscreen();
+        }
+      }
+    }, { passive: true });
+
+    this.registerDomEvent(this.contentEl, "touchend", () => {
+      pinchStart = null;
+    }, { passive: true });
+
+    this.registerDomEvent(document, "keydown", (evt) => {
+      if (evt.key !== "Escape") return;
+      if (!document.body.classList.contains("split-notes-fullscreen")) return;
+      if (this.app.workspace.getActiveViewOfType(ItemView) === this) {
+        this.toggleFullscreen();
+      }
+    });
   }
 
   /* ---------------------------------------------------------------- */
@@ -516,6 +559,19 @@ class SplitNotesSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+
+    new Setting(containerEl)
+      .setName("Gerçek tam ekran")
+      .setDesc("Tam ekranda panel başlıkları da gizlenir; ekranda yalnızca iki not kalır. Çıkmak için iki parmakla küçültme hareketi yapın (masaüstünde Esc).")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.hidePaneHeadersInFullscreen)
+          .onChange(async (value) => {
+            this.plugin.settings.hidePaneHeadersInFullscreen = value;
+            await this.plugin.saveSettings();
+            this.plugin.applyChromelessToActiveView();
+          })
+      );
   }
 }
 
@@ -588,6 +644,15 @@ class SplitNotesPlugin extends Plugin {
     view.contentEl.removeClass("is-row", "is-column");
     if (this.settings.splitDirection === "row") view.contentEl.addClass("is-row");
     if (this.settings.splitDirection === "column") view.contentEl.addClass("is-column");
+  }
+
+  /* "Gerçek tam ekran" ayarı değişince açık görünümü güncelle */
+  applyChromelessToActiveView() {
+    const view = this.getActiveView();
+    if (!view) return;
+    view.applyChromeless(
+      document.body.classList.contains("split-notes-fullscreen")
+    );
   }
 
   getActiveView() {
