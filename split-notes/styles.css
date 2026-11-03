@@ -1,10 +1,7 @@
-/* Çift Not Görünümü — sıkışık yerleşim, çekirdek uyumlu.
-   Sorunlar bu sürümde giderildi:
-   - gereksiz dış dolgular kaldırıldı (boş alan problemi)
-   - mobilde alt nav çubuğu içeriğin üstüne binmesin diye güvenli alan eklendi
-   - panel başlıkları kompaktlaştırıldı */
+/* Çift Not Görünümü — yuvarlatılmış paneller, çekirdek uyumlu yerleşim.
+   Bu sürüm: panel köşeleri yuvarlatıldı; senkron kaydırma düğmesinin
+   aktif durumu temalandırıldı. */
 
-/* Dış dolgu yok: görünüm tüm alanı kaplar, paneller arası yalnızca ince çizgi */
 .split-notes {
   display: flex;
   flex-direction: column;
@@ -12,15 +9,16 @@
   background: var(--background-primary);
 }
 
+/* Paneller arası minik boşluk — yuvarlatılmış köşeler nefes alsın */
 .split-notes-panes {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
-  gap: 1px;
-  padding: 0;
+  gap: var(--size-2-2);
+  padding: var(--size-2-2);
 }
 
-/* Panel: çerçeve yerine çekirdek yaprak bölmesi gibi ayırıcı */
+/* Panel: yuvarlatılmış köşeler, ince tema çerçevesi */
 .split-notes-pane {
   flex: 1 1 0;
   min-width: 0;
@@ -28,20 +26,12 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
   background: var(--background-primary);
 }
 
-.split-notes-pane + .split-notes-pane {
-  border-left: 1px solid var(--background-modifier-border);
-}
-
-/* Dikey yerleşimde ayırıcı üstte olur */
-.split-notes.is-column .split-notes-pane + .split-notes-pane,
-.split-notes-panes:not(.is-row) .split-notes-pane + .split-notes-pane {
-  border-left: none;
-}
-
-/* Kompakt panel başlığı — çekirdek sekmelerin yüksekliğiyle uyumlu */
+/* Başlık, panelin üst köşe yuvarlatmasını izler (overflow: hidden) */
 .split-notes-pane-header {
   display: flex;
   align-items: center;
@@ -80,21 +70,19 @@
   gap: 0;
 }
 
-/* İkon düğmeleri kompakt: çekirdek clickable-icon boyutları */
 .split-notes-pane-actions .clickable-icon {
   padding: var(--size-2-1) var(--size-2-2);
 }
 
-/* Panelin tek scroll container'ı bu dış sarmalayıcıdır. */
+/* İçerik */
 .split-notes-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  border-radius: 0 0 var(--radius-m) var(--radius-m);
 }
 
-/* Obsidian'ın markdown-preview-view varsayılan overflow/height ayarlarını
-   geçersiz kıl: içerik sarmalayıcıyı büyütsün, kaydırmayı sarmalayıcı yapsın. */
 .split-notes-scroll > .markdown-preview-view {
   height: auto;
   min-height: 100%;
@@ -127,6 +115,12 @@
   font-size: var(--font-ui-smaller);
 }
 
+/* Görünüm başlığındaki senkron kaydırma düğmesi: aktifken vurgulanır */
+.workspace-leaf-content[data-type="split-notes-view"] .view-action.is-on {
+  color: var(--text-accent);
+  opacity: 1;
+}
+
 /* Yön seçimi (ayarlar) */
 .split-notes.is-row .split-notes-panes {
   flex-direction: row;
@@ -136,8 +130,7 @@
   flex-direction: column;
 }
 
-/* Mobil: alt nav çubuğu ve güvenli alan (iOS home göstergesi)
-   içeriğin üstüne binmesin. Obsidian mobilde body'ye .is-mobile eklenir. */
+/* Mobil: alt nav çubuğu ve güvenli alan içeriğin üstüne binmesin */
 body.is-mobile .split-notes .markdown-preview-view {
   padding: var(--size-4-2) var(--size-4-3) calc(var(--size-4-8) + env(safe-area-inset-bottom, 0px)) var(--size-4-3);
 }
@@ -146,11 +139,5 @@ body.is-mobile .split-notes .markdown-preview-view {
 @media (max-width: 600px) {
   .split-notes-panes {
     flex-direction: column;
-  }
-
-  /* Dikey yerleşimde paneller arası üst ayırıcı */
-  .split-notes-panes .split-notes-pane + .split-notes-pane {
-    border-left: none;
-    border-top: 1px solid var(--background-modifier-border);
   }
 }
