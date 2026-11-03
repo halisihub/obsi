@@ -1,0 +1,9 @@
+{
+  "id": "split-notes",
+  "name": "Çift Not Görünümü",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "İki notu aynı anda yan yana veya alt alta görüntüleyin. Mobil uyumlu, temalara duyarlı.",
+  "author": "halisihub",
+  "isDesktopOnly": false
+}
