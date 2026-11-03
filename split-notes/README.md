@@ -1,15 +1,39 @@
 # Çift Not Görünümü (Split Notes)
 
-Mobil ve masaüstünde **iki notu aynı anda** görüntüleyen, temalara tam uyumlu, çekirdek eklenti görünümünde bir Obsidian eklentisi.
+Mobil ve masaüstünde **iki notu aynı anda** görüntüleyen, çekirdek eklenti kalitesinde bir Obsidian eklentisi. Arayüz, Obsidian'ın çekirdek görünüm sınıflarına (`markdown-preview-view`, `clickable-icon`, `empty-state`, `view-header`) yaslanır; bu yüzden her temada sanki çekirdek bir görünümmüş gibi görünür.
+
+## Neden çekirdek eklenti gibi hissedilir?
+
+- 📄 **İçerik gerçek okuma görünümü olarak render edilir** — paneller `markdown-preview-view` + `markdown-preview-sizer` sınıflarıyla sarılır; temalar başlıkları, alıntıları, listeleri çekirdek okuma modundaki gibi stillendirir
+- 🗂 **Çekirdek yaprak başlıkları** — her panelde dosya adı, "yeni sekmede aç" ve "diğer seçenekler" düğmeleri (yerleşik `clickable-icon` stili)
+- 🖱 **Sağ tık menüsü** — çekirdek `Menu` bileşeniyle: yenile, not seç, panelleri değiştir, paneli temizle
+- 🔎 **Hızlı not arama** — çekirdek `FuzzySuggestModal` ile
+- 🔗 **İç linkler çekirdek davranışla** — tıkla: panelde aç; Shift/Cmd+tık: yeni sekmede aç
+- 🔴 **Canlı içerik** — not düzenlenince panel otomatik yenilenir (debounce'lu); silinirse panel temizlenir, yeniden adlandırılırsa başlık güncellenir
+- ⚙️ **Ayarlar sekmesi** — çekirdek `Setting` bileşenleriyle
 
 ## Özellikler
 
-- 📱 **Mobil uyumlu** (`isDesktopOnly: false`) — telefonlarda paneller otomatik alt alta dizilir
-- 🪟 İki not yan yana (≥600px ekranda) veya alt alta
-- 🎨 **Tema duyarlı**: tüm renkler Obsidian CSS değişkenlerinden (`--background-primary`, `--interactive-normal` vb.) gelir; açık/koyu ve üçüncü parti temalarla uyumlu
-- 🔗 İç not linklerine dokununca ilgili panelde not açılır
-- 🔀 Panellerin yerini tek dokunuşla değiştirme
-- 🧩 Çekirdek eklenti hissi: ribbon ikonu, komut paleti komutları, yerleşik arayüz bileşenleri
+- 📱 **Mobil uyumlu** — telefonlarda paneller otomatik alt alta; yön ayarlardan da sabitlenebilir
+- 🎨 **Tema duyarlı** — yalnızca tema değişkenleri, sabit renk yok
+- 🧠 **Son notları hatırlar** — görünüm yeniden açıldığında paneller geri yüklenir
+- ↔️ **Senkron kaydırma** (isteğe bağlı) — bir panel kaydırılınca diğeri aynı oranda kayar
+- 🔀 **Panelleri değiştir** komutu + sağ tık menüsü
+- ↕️ Kaydırma konumu, panel yenilenirken korunur
+
+## Komutlar
+
+| Komut | Ne yapar |
+| --- | --- |
+| Çift not görünümünü aç | Görünümü yeni sekmede açar |
+| Aktif notu çift görünümde aç | Aktif notu soldaki panele yükler |
+| Panellerin yerini değiştir | İki panelin içeriğini takas eder |
+
+## Kurulum (BRAT ile — önerilen)
+
+1. Obsidian'da **BRAT** eklentisini kurun
+2. BRAT ayarlarında **Add Beta plugin** → `halisihub/obsi`
+3. Eklentiyi etkinleştirin
 
 ## Kurulum (elle)
 
@@ -17,17 +41,10 @@ Mobil ve masaüstünde **iki notu aynı anda** görüntüleyen, temalara tam uyu
 2. Kasanızdaki `.obsidian/plugins/split-notes/` klasörüne kopyalayın
 3. Ayarlar → Topluluk eklentileri'nden **Çift Not Görünümü**'nü etkinleştirin
 
-## Kullanım
+## Ayarlar
 
-- Sol üstteki **ribbon ikonuna** dokunun veya komut paletinden **"Çift not görünümünü aç"** çalıştırın
-- Üstteki iki **"Not seç"** düğmesine dokunarak her panel için not seçin
-- **"Aktif notu çift görünümde aç"** komutu, açık olan notu doğrudan soldaki panele yükler
-- Ortadaki ok düğmesiyle panellerin yerini değiştirebilirsiniz
-
-## Dosyalar
-
-| Dosya | Açıklama |
+| Ayar | Açıklama |
 | --- | --- |
-| `manifest.json` | Eklenti meta verileri |
-| `main.js` | Eklenti kodu (derleme gerektirmez, saf JS) |
-| `styles.css` | Tema değişkenleriyle uyumlu stiller |
+| Panel yönü | Otomatik / yan yana / alt alta |
+| Son notları hatırla | Yeniden açılışta panelleri geri yükler |
+| Senkron kaydırma | Panellerin oransal kaydırma senkronu |
