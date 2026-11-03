@@ -88,6 +88,15 @@ class SplitNotesView extends ItemView {
     this.buildPane("left");
     this.buildPane("right");
 
+    /* Çekirdek görünüm başlığı düğmesi: senkron kaydırmayı
+       tek dokunuşla aç/kapat (ayarlara girmeden). */
+    this.syncBtn = this.addAction("link-2", "Senkron kaydırma", () => {
+      this.plugin.settings.syncScroll = !this.plugin.settings.syncScroll;
+      void this.plugin.saveSettings();
+      this.updateSyncButton();
+    });
+    this.updateSyncButton();
+
     /* Canlı güncelleme: dosya düzenlenince paneli tazele */
     this.registerEvent(
       this.app.vault.on("modify", (file) => this.refreshIfVisible(file))
@@ -110,6 +119,17 @@ class SplitNotesView extends ItemView {
       if (pending) window.clearTimeout(pending.timeout);
     }
     await this.saveState();
+  }
+
+  /* Başlık düğmesinin durumunu yansıt */
+  updateSyncButton() {
+    if (!this.syncBtn) return;
+    const on = this.plugin.settings.syncScroll;
+    this.syncBtn.classList.toggle("is-on", on);
+    this.syncBtn.setAttribute(
+      "aria-label",
+      on ? "Senkron kaydırma: açık" : "Senkron kaydırma: kapalı"
+    );
   }
 
   /* ---------------------------------------------------------------- */
