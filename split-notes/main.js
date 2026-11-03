@@ -94,6 +94,18 @@ class SplitNotesView extends ItemView {
       this.plugin.settings.syncScroll = !this.plugin.settings.syncScroll;
       void this.plugin.saveSettings();
       this.updateSyncButton();
+
+    /* Çekirdek görünüm başlığı düğmesi: tam ekran */
+    this.fsBtn = this.addAction("maximize-2", "Tam ekran", () => {
+      this.toggleFullscreen();
+    });
+
+    /* Tam ekrandan çıkmak için köşede küçük yüzen düğme
+       (tam ekranda tüm başlıklar gizlenir). */
+    this.exitBtnEl = this.contentEl.createDiv({ cls: "split-notes-exit clickable-icon" });
+    setIcon(this.exitBtnEl, "minimize-2");
+    this.exitBtnEl.setAttribute("aria-label", "Tam ekrandan çık");
+    this.exitBtnEl.addEventListener("click", () => this.toggleFullscreen());
     });
     this.updateSyncButton();
 
@@ -130,6 +142,14 @@ class SplitNotesView extends ItemView {
       "aria-label",
       on ? "Senkron kaydırma: açık" : "Senkron kaydırma: kapalı"
     );
+  }
+
+  /* Tam ekran: üst/alt çubukları gizle, paneller tüm ekranı kaplasın */
+  toggleFullscreen() {
+    const on = !document.body.classList.contains("split-notes-fullscreen");
+    document.body.classList.toggle("split-notes-fullscreen", on);
+    if (this.fsBtn) this.fsBtn.classList.toggle("is-on", on);
+    if (this.exitBtnEl) this.exitBtnEl.classList.toggle("is-on", on);
   }
 
   /* ---------------------------------------------------------------- */
@@ -524,6 +544,17 @@ class SplitNotesPlugin extends Plugin {
       id: "open-with-active",
       name: "Aktif notu çift görünümde aç",
       callback: () => void this.activateViewWithActive()
+    });
+
+    this.addCommand({
+      id: "toggle-fullscreen",
+      name: "Tam ekranı aç/kapat",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.toggleFullscreen();
+        return true;
+      }
     });
 
     this.addCommand({
