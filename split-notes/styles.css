@@ -1,0 +1,99 @@
+/* Çift Not Görünümü — tema değişkenleriyle uyumlu stiller */
+
+.split-notes-view-container .view-header {
+  /* Çekirdek eklenti görünümüyle aynı başlık hissi */
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.split-notes-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--size-4-2);
+  gap: var(--size-4-2);
+  background: var(--background-primary);
+}
+
+.split-notes-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-2);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.split-notes-header button {
+  box-shadow: none;
+}
+
+.split-notes-picker {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--interactive-normal);
+  color: var(--text-normal);
+}
+
+.split-notes-picker:hover {
+  background: var(--interactive-hover);
+}
+
+.split-notes-swap {
+  flex: 0 0 auto;
+  background: var(--interactive-normal);
+  color: var(--text-muted);
+}
+
+.split-notes-swap:hover {
+  background: var(--interactive-hover);
+  color: var(--text-normal);
+}
+
+.split-notes-panes {
+  flex: 1 1 auto;
+  display: flex;
+  gap: var(--size-4-2);
+  min-height: 0;
+}
+
+.split-notes-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+}
+
+.split-notes-scroll {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--file-margins);
+  font-size: var(--font-text-size);
+  line-height: var(--line-height-normal);
+}
+
+.split-notes-pane-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--size-4-3);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* Dar ekranlarda (telefon) paneller alt alta geçer */
+@media (max-width: 600px) {
+  .split-notes-panes {
+    flex-direction: column;
+  }
+
+  .split-notes-header {
+    flex-wrap: wrap;
+  }
+}
