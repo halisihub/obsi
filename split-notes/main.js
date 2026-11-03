@@ -66,6 +66,7 @@ class SplitNotesView extends ItemView {
     this.scrolls = { left: null, right: null };
     this.panes = {};
     this.syncing = false;
+    this.syncFrame = null;
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -320,15 +321,26 @@ class SplitNotesView extends ItemView {
   registerSyncScroll(side, scrollEl) {
     scrollEl.addEventListener("scroll", () => {
       if (!this.plugin.settings.syncScroll || this.syncing) return;
+
       const other = side === "left" ? "right" : "left";
       const otherEl = this.scrolls[other];
       if (!otherEl) return;
-      const ratio = scrollEl.scrollTop /
-        Math.max(1, scrollEl.scrollHeight - scrollEl.clientHeight);
+
+      const sourceMax = scrollEl.scrollHeight - scrollEl.clientHeight;
+      const targetMax = otherEl.scrollHeight - otherEl.clientHeight;
+      if (sourceMax <= 0 || targetMax <= 0) return;
+
+      const ratio = Math.min(1, Math.max(0, scrollEl.scrollTop / sourceMax));
       this.syncing = true;
-      otherEl.scrollTop = ratio *
-        Math.max(1, otherEl.scrollHeight - otherEl.clientHeight);
-      this.syncing = false;
+      otherEl.scrollTop = ratio * targetMax;
+
+      if (this.syncFrame !== null) {
+        cancelAnimationFrame(this.syncFrame);
+      }
+      this.syncFrame = requestAnimationFrame(() => {
+        this.syncing = false;
+        this.syncFrame = null;
+      });
     });
   }
 
