@@ -308,3 +308,14 @@ body.split-notes-fullscreen:not(.is-mobile) .split-notes {
 body.is-mobile.split-notes-fullscreen .split-notes {
   padding-top: 0;
 }
+
+/* Yatay ekran: JS tarafından dikey konumdayken ölçülüp saklanan inset
+   ve status-bar-height burada kullanılmaz. WebView safe-area değeri
+   CSS tarafından anlık çözülür; böylece portre modundaki üst boşluk
+   yataya taşınmaz. Android WebView safe-area vermiyorsa 0 kullanılır;
+   cihazına özel bir değer gerekiyorsa ayardan manuel inset verilebilir. */
+@media (orientation: landscape) {
+  body.is-mobile.split-notes-fullscreen .app-container {
+    padding-top: env(safe-area-inset-top, 0px) !important;
+  }
+}
