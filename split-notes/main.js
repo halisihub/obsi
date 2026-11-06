@@ -210,6 +210,7 @@ class SplitNotesView extends ItemView {
 
   async onClose() {
     document.body.classList.remove("split-notes-fullscreen");
+    this.plugin.applyNativeFullscreenMode(false);
     for (const side of ["left", "right"]) {
       if (this.components[side]) this.components[side].unload();
       const pending = this.programmaticScrolls[side];
@@ -257,6 +258,7 @@ class SplitNotesView extends ItemView {
     this.isFullscreen = on;
     this.plugin.updateGlobalClasses();
     if (this.fsBtn) this.fsBtn.classList.toggle("is-on", on);
+    this.plugin.applyNativeFullscreenMode(on);
     this.applyChromeless(on);
   }
 
@@ -416,7 +418,7 @@ class SplitNotesView extends ItemView {
   /* ---------------------------------------------------------------- */
   pickPair() {
     if (!this.plugin.settings.pairs.length) {
-      new Notice("Kayıtlı çift yok. Panelleri açıp \u201CMevcut panelleri çift olarak kaydet\u201D komutunu kullanın.");
+      new Notice("Kayıtlı çift yok. Panelleri açıp “Mevcut panelleri çift olarak kaydet” komutunu kullanın.");
       return;
     }
     new PairPickerModal(this.app, this.plugin, (pair) => this.loadPair(pair)).open();
@@ -882,7 +884,7 @@ class SplitNotesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Tam ekran üst payı (piksel)")
-      .setDesc("Tam ekranda panellerin saat çubuğunun altından başlaması için üstte bırakılacak boşluk. 0 (varsayılan) = otomatik algıla: eklenti cihazın saat alanını kendisi ölçer. Otomatik ölçüm cihazında tutmazsa elle piksel gir.")
+      .setDesc("Tam ekranda panellerin saat çubuğunun altından başlaması için üstte bırakılacak boşluk. 0 (varsayılan) = otomatik algıla: eklenti cihazın saat alanını kendisi ölçer.")
       .addText((text) => {
         text.inputEl.type = "number";
         text
@@ -953,6 +955,7 @@ class SplitNotesPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
     this.applyTopInset();
+    this.applyNativeFullscreenMode(false);
 
     /* Gövde sınıfları yalnızca çift görünüm etkinken açık: başka bir
        nota geçildiğinde alt menü / üst çubuk / tam ekran geri gelir. */
@@ -1118,6 +1121,7 @@ class SplitNotesPlugin extends Plugin {
     document.body.classList.remove("split-notes-hide-navbar");
     document.body.classList.remove("split-notes-hide-statusbar");
     document.body.classList.remove("split-notes-fullscreen");
+    this.applyNativeFullscreenMode(false);
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
 
@@ -1144,6 +1148,68 @@ class SplitNotesPlugin extends Plugin {
     const view = this.getActiveView();
     if (!view) return;
     view.applyChromeless(view.isFullscreen);
+  }
+
+  tryNativeStatusBarHide() {
+    try {
+      const statusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
+      if (statusBar && typeof statusBar.hide === "function") {
+        statusBar.hide();
+      }
+    } catch (e) {
+      // no-op: native bridge may be absent or unsupported
+    }
+  }
+
+  tryNativeStatusBarShow() {
+    try {
+      const statusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
+      if (statusBar && typeof statusBar.show === "function") {
+        statusBar.show();
+      }
+    } catch (e) {
+      // no-op
+    }
+  }
+
+  tryBrowserFullscreenHide() {
+    try {
+      const root = document.documentElement;
+      if (!root || typeof root.requestFullscreen !== "function") return false;
+      root.requestFullscreen({ navigationUI: "hide" });
+      return true;
+    } catch (e) {
+      try {
+        const root = document.documentElement;
+        if (root && typeof root.requestFullscreen === "function") {
+          root.requestFullscreen();
+          return true;
+        }
+      } catch (e2) {
+        // no-op
+      }
+      return false;
+    }
+  }
+
+  exitBrowserFullscreen() {
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    } catch (e) {
+      // no-op
+    }
+  }
+
+  applyNativeFullscreenMode(enabled) {
+    if (enabled) {
+      this.tryNativeStatusBarHide();
+      this.tryBrowserFullscreenHide();
+    } else {
+      this.tryNativeStatusBarShow();
+      this.exitBrowserFullscreen();
+    }
   }
 
   /* Saat çubuğu payı otomatik ölçümü. İki kaynağın en büyüğü kullanılır:
