@@ -882,7 +882,7 @@ class SplitNotesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Tam ekran üst payı (piksel)")
-      .setDesc("Tam ekranda panellerin saat çubuğunun altından başlaması için üstte bırakılacak boşluk. Deneyerek bul: 30-50 piksel civarı uygundur. 0 = boşluk yok.")
+      .setDesc("Tam ekranda panellerin saat çubuğunun altından başlaması için üstte bırakılacak boşluk. 0 (varsayılan) = otomatik algıla: eklenti cihazın saat alanını kendisi ölçer. Otomatik ölçüm cihazında tutmazsa elle piksel gir.")
       .addText((text) => {
         text.inputEl.type = "number";
         text
@@ -960,7 +960,10 @@ class SplitNotesPlugin extends Plugin {
       this.app.workspace.on("active-leaf-change", () => this.updateGlobalClasses())
     );
     this.registerEvent(
-      this.app.workspace.on("layout-change", () => this.updateGlobalClasses())
+      this.app.workspace.on("layout-change", () => {
+        this.updateGlobalClasses();
+        this.applyTopInset();
+      })
     );
 
     this.registerView(VIEW_TYPE, (leaf) => new SplitNotesView(leaf, this));
@@ -1143,11 +1146,39 @@ class SplitNotesPlugin extends Plugin {
     view.applyChromeless(view.isFullscreen);
   }
 
-  /* Tam ekran üst payı: cihazın saat çubuğu yüksekliği (px). Webview
-     env()'i boş döndürdüğü için değer kullanıcı tarafından ayarlanır. */
+  /* Saat çubuğu payı otomatik ölçümü. İki kaynağın en büyüğü kullanılır:
+     1) Obsidian'ın kendi app-container üst dolgusu — cihazda saat için
+        ayrılan alanın birebir aynısı (en güvenilir ölçü).
+     2) CSS env()/var() zincirinin ara bir elemanla çözümlenen değeri. */
+  measureSafeAreaTop() {
+    let measured = 0;
+    try {
+      const app = document.querySelector(".app-container");
+      if (app) {
+        const native = parseFloat(getComputedStyle(app).paddingTop);
+        if (Number.isFinite(native) && native > measured) measured = native;
+      }
+    } catch (e) { /* yok say */ }
+    try {
+      const probe = document.createElement("div");
+      probe.style.cssText =
+        "position:absolute;top:0;left:0;visibility:hidden;pointer-events:none;" +
+        "height:0;width:0;padding-top:var(--safe-area-inset-top, env(safe-area-inset-top, 0px));";
+      document.body.appendChild(probe);
+      const v = parseFloat(getComputedStyle(probe).paddingTop);
+      probe.remove();
+      if (Number.isFinite(v) && v > measured) measured = v;
+    } catch (e) { /* yok say */ }
+    return Math.round(measured);
+  }
+
+  /* Tam ekran üst payı: manuel değer 0 ise (varsayılan) cihazın saat
+     alanı otomatik ölçülür. Manuel değer yalnızca otomatik ölçüm
+     tutmuyorsa gerekli bir yedektir. */
   applyTopInset() {
-    const v = Math.max(0, Math.round(Number(this.settings.fullscreenTopInset) || 0));
-    document.body.style.setProperty("--split-notes-top-inset", v + "px");
+    const manual = Math.max(0, Math.round(Number(this.settings.fullscreenTopInset) || 0));
+    const value = manual > 0 ? manual : this.measureSafeAreaTop();
+    document.body.style.setProperty("--split-notes-top-inset", value + "px");
   }
 
   /* Şu anda görüntülenen görünüm çift not görünümü mü? */
