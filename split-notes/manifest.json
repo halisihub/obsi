@@ -1,7 +1,7 @@
 {
   "id": "split-notes",
   "name": "Çift Not Görünümü",
-  "version": "3.3.3",
+  "version": "3.3.4",
   "minAppVersion": "1.4.0",
   "description": "İki notu aynı anda görüntüleyin. Çiftler, gezinme geçmişi, gerçek tam ekran, senkron kaydırma, alt/üst çubuk gizleme.",
   "author": "halisihub",
