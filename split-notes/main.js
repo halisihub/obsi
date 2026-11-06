@@ -142,8 +142,6 @@ class SplitNotesView extends ItemView {
     };
     // Son kullanıcı etkileşiminin olduğu panel (geçmiş komutları için)
     this.lastSide = null;
-    // Panel odağı: null (ikisi) | "left" | "right"
-    this.focus = null;
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -163,10 +161,6 @@ class SplitNotesView extends ItemView {
     this.panesEl = this.contentEl.createDiv({ cls: "split-notes-panes" });
     this.buildPane("left");
     this.buildPane("right");
-
-    /* Mobil panel odağı: alt ortada küçük geçiş kumandası.
-       Yalnızca dar ekran ve/veya tam ekranda görünür (styles.css). */
-    this.buildSwitch();
 
     /* Çekirdek görünüm başlığı düğmesi: senkron kaydırmayı
        tek dokunuşla aç/kapat (ayarlara girmeden). */
@@ -277,47 +271,6 @@ class SplitNotesView extends ItemView {
         this.toggleFullscreen();
       }
     });
-  }
-
-  /* ---------------------------------------------------------------- */
-  /* Mobil panel odağı (geçiş kumandası)                               */
-  /* ---------------------------------------------------------------- */
-  buildSwitch() {
-    this.switchEl = this.contentEl.createDiv({ cls: "split-notes-switch" });
-
-    const mk = (side, label) => {
-      const btn = this.switchEl.createDiv({ cls: "split-notes-switch-btn" });
-      setIcon(btn, side === "left" ? "panel-left" : "panel-right");
-      btn.setAttribute("aria-label", label);
-      btn.addEventListener("click", () => {
-        this.setFocus(this.focus === side ? null : side);
-      });
-      return btn;
-    };
-    this.switchBtns = {
-      left: mk("left", "Sol panele odaklan (tekrar dokun: ikisi de)"),
-      right: mk("right", "Sağ panele odaklan (tekrar dokun: ikisi de)")
-    };
-  }
-
-  setFocus(side) {
-    this.focus = side;
-    this.contentEl.toggleClass("focus-left", side === "left");
-    this.contentEl.toggleClass("focus-right", side === "right");
-    this.updateSwitchUI();
-  }
-
-  updateSwitchUI() {
-    if (!this.switchBtns) return;
-    this.switchBtns.left.classList.toggle("is-active", this.focus === "left");
-    this.switchBtns.right.classList.toggle("is-active", this.focus === "right");
-  }
-
-  /* Odağı döngüle: sol → sağ → ikisi */
-  cycleFocus() {
-    if (this.focus === "left") this.setFocus("right");
-    else if (this.focus === "right") this.setFocus(null);
-    else this.setFocus("left");
   }
 
   /* ---------------------------------------------------------------- */
@@ -1003,18 +956,6 @@ class SplitNotesPlugin extends Plugin {
         const view = this.getActiveView();
         if (!view) return false;
         if (!checking) view.pickPair();
-        return true;
-      }
-    });
-
-    /* ---- Yeni: mobil panel odağı ---- */
-    this.addCommand({
-      id: "cycle-focus",
-      name: "Panel odağını değiştir (sol → sağ → ikisi)",
-      checkCallback: (checking) => {
-        const view = this.getActiveView();
-        if (!view) return false;
-        if (!checking) view.cycleFocus();
         return true;
       }
     });
