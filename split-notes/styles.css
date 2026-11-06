@@ -6,6 +6,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   background: var(--background-primary);
 }
 
@@ -197,11 +198,6 @@ body.split-notes-fullscreen .split-notes.is-chromeless .split-notes-pane {
   display: flex;
 }
 
-.split-notes {
-  height: 100%;
-  min-height: 0;
-}
-
 .split-notes-panes {
   min-height: 0;
 }
@@ -254,10 +250,6 @@ body.split-notes-fullscreen .view-content {
   height: 100% !important;
 }
 
-body.split-notes-fullscreen .view-content {
-  height: 100% !important;
-}
-
 /* ------------------------------------------------------------------ */
 /* Alt menü gizleme (başlıktaki göz düğmesi / komut)                   */
 /* Menü DOM'dan tamamen kalktığı için paneller altta menüye hiç         */
@@ -278,8 +270,7 @@ body.split-notes-hide-statusbar .app-container {
   margin-top: 0 !important;
 }
 
-body.split-notes-hide-statusbar .titlebar,
-body.split-notes-hide-statusbar .mobile-navbar-top {
+body.split-notes-hide-statusbar .titlebar {
   display: none !important;
 }
 
@@ -315,4 +306,55 @@ body.is-mobile.split-notes-fullscreen .split-notes {
       var(--status-bar-height, 0px)
     ) !important;
   }
+}
+
+/* ================================================================== */
+/* 3.4 — Panel ayırıcı (sürükle-boyutlandır)                          */
+/* ================================================================== */
+.split-notes-divider {
+  flex: 0 0 var(--size-2-2);
+  background: transparent;
+  cursor: col-resize;
+  align-self: stretch;
+  margin: 0;
+  border-radius: var(--radius-s);
+  transition: background 100ms ease;
+}
+
+.split-notes-divider:hover,
+.split-notes-divider.is-dragging {
+  background: var(--background-modifier-border);
+}
+
+.split-notes.is-column .split-notes-divider {
+  cursor: row-resize;
+}
+
+/* ================================================================== */
+/* 3.4 — Görsel önizleme                                               */
+/* ================================================================== */
+.split-notes-image {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+/* ================================================================== */
+/* 3.4 — Panelde arama vurgusu                                         */
+/* ================================================================== */
+.split-notes-search-hit {
+  background: var(--text-highlight-bg);
+  border-radius: 2px;
+}
+
+.split-notes-search-hit.is-active {
+  outline: 2px solid var(--text-accent);
+}
+
+/* ================================================================== */
+/* 3.4 — Native saat çubuğu gizliyse tam ekranda üst pay kalmaz        */
+/* (dosya sonunda: aynı belirtilikteki önceki kuralları geçersiz kılar) */
+/* ================================================================== */
+body.split-notes-fullscreen.split-notes-native-fs .app-container {
+  padding-top: 0 !important;
 }
