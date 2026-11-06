@@ -41,7 +41,8 @@ const DEFAULT_SETTINGS = {
   syncScrollMode: "delta",  // delta: aynı mesafe | proportional: aynı oran
   linkTarget: "other",      // other: bağlantı diğer panelde açılır | same: aynı panelde
   hidePaneHeadersInFullscreen: false, // gerçek tam ekran: panel başlıkları da gizlenir
-  pairs: []                 // kayıtlı not çiftleri: [{ name, leftPath, rightPath }]
+  pairs: [],                // kayıtlı not çiftleri: [{ name, leftPath, rightPath }]
+  hideNavbar: false         // mobil alt menü gizli mi
 };
 
 /* ================================================================== */
@@ -181,6 +182,12 @@ class SplitNotesView extends ItemView {
       this.toggleFullscreen();
     });
 
+    /* EN SAĞ düğme: mobil alt menüyü gizle/göster */
+    this.navBtn = this.addAction("eye-off", "Alt menüyü gizle/göster", () => {
+      this.toggleNavbar();
+    });
+    this.applyNavbar();
+
     /* Tam ekrandan çıkış: iki parmakla küçültme (pinch-in) hareketi,
        masaüstünde Esc tuşu. Yüzen düğme YOK. */
     this.registerFullscreenGestures();
@@ -218,6 +225,25 @@ class SplitNotesView extends ItemView {
       "aria-label",
       on ? "Senkron kaydırma: açık" : "Senkron kaydırma: kapalı"
     );
+  }
+
+  /* Alt menü (mobil navbar) gizle/göster — ayara yazılır, kalıcıdır */
+  toggleNavbar() {
+    this.plugin.settings.hideNavbar = !this.plugin.settings.hideNavbar;
+    void this.plugin.saveSettings();
+    this.applyNavbar();
+  }
+
+  applyNavbar() {
+    const on = this.plugin.settings.hideNavbar;
+    document.body.classList.toggle("split-notes-hide-navbar", on);
+    if (this.navBtn) {
+      this.navBtn.classList.toggle("is-on", on);
+      this.navBtn.setAttribute(
+        "aria-label",
+        on ? "Alt menü gizli — göstermek için dokun" : "Alt menüyü gizle"
+      );
+    }
   }
 
   /* Tam ekran: üst/alt çubukları gizle, paneller tüm ekranı kaplasın */
@@ -960,6 +986,18 @@ class SplitNotesPlugin extends Plugin {
       }
     });
 
+    /* ---- Yeni: alt menü gizle/göster ---- */
+    this.addCommand({
+      id: "toggle-navbar",
+      name: "Alt menüyü gizle/göster (mobil)",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.toggleNavbar();
+        return true;
+      }
+    });
+
     /* ---- Yeni: panel geçmişi ---- */
     this.addCommand({
       id: "history-back",
@@ -988,6 +1026,7 @@ class SplitNotesPlugin extends Plugin {
   }
 
   onunload() {
+    document.body.classList.remove("split-notes-hide-navbar");
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
 
