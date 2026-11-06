@@ -272,12 +272,19 @@ body.split-notes-hide-statusbar .mobile-navbar-top {
 }
 
 /* ------------------------------------------------------------------ */
-/* Saat çubuğu payı (tam ekran): Obsidian'ın webview'inde env() ve     */
-/* --safe-area-inset-top boş döndüğü için üstte bırakılacak boşluk     */
-/* ayarlardaki "Tam ekran üst payı (piksel)" değerinden gelir. Eklenti */
-/* bu değeri body üzerinde --split-notes-top-inset olarak tanımlar.    */
+/* Saat çubuğu payı (tam ekran): dört kaynağın en büyüğü kullanılır.   */
+/*  --status-bar-height: Obsidian'ın Android'de tanımladığı resmi      */
+/*    durum çubuğu yüksekliği değişkeni (~40px)                        */
+/*  --safe-area-inset-top: Obsidian'ın mobilde tanımladığı pay        */
+/*  env(safe-area-inset-top): webview'in bildirdiği pay               */
+/*  --split-notes-top-inset: eklentinin ölçtüğü / manuel ayar          */
 /* ------------------------------------------------------------------ */
 
 body.split-notes-fullscreen .split-notes {
-  padding-top: var(--split-notes-top-inset, var(--safe-area-inset-top, 0px));
+  padding-top: max(
+    var(--split-notes-top-inset, 0px),
+    env(safe-area-inset-top, 0px),
+    var(--safe-area-inset-top, 0px),
+    var(--status-bar-height, 0px)
+  );
 }
