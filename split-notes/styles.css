@@ -228,7 +228,7 @@ body.split-notes-fullscreen .app-container {
   /* Saat çubuğu (OS status bar) gizlenemez; ama tarayıcı bu alanın
      boyutunu env(safe-area-inset-top) ile bildirir. İçeriğin saatin
      altında kalmaması için bu payı aynen koru. */
-  padding-top: env(safe-area-inset-top, 0px) !important;
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) !important;
   margin: 0 !important;
 }
 
@@ -282,5 +282,5 @@ body.split-notes-hide-statusbar .mobile-navbar-top {
 /* ------------------------------------------------------------------ */
 
 body.split-notes-fullscreen .split-notes {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
 }
