@@ -225,6 +225,10 @@ body.split-notes-fullscreen .titlebar {
 
 body.split-notes-fullscreen .app-container {
   padding: 0 !important;
+  /* Saat çubuğu (OS status bar) gizlenemez; ama tarayıcı bu alanın
+     boyutunu env(safe-area-inset-top) ile bildirir. İçeriğin saatin
+     altında kalmaması için bu payı aynen koru. */
+  padding-top: env(safe-area-inset-top, 0px) !important;
   margin: 0 !important;
 }
 
@@ -269,4 +273,14 @@ body.split-notes-hide-statusbar .app-container {
 body.split-notes-hide-statusbar .titlebar,
 body.split-notes-hide-statusbar .mobile-navbar-top {
   display: none !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Saat çubuğu payı (tam ekran): tarayıcı env(safe-area-inset-top) ile */
+/* bu alanın cihaza göre gerçek boyutunu bildirir; paneller saatin     */
+/* hemen altından başlar — ne altında kalır ne boşluk bırakır.         */
+/* ------------------------------------------------------------------ */
+
+body.split-notes-fullscreen .split-notes {
+  padding-top: env(safe-area-inset-top, 0px);
 }
