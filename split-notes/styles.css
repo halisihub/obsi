@@ -247,19 +247,12 @@ body.split-notes-fullscreen .view-content {
 }
 
 /* ------------------------------------------------------------------ */
-/* Normal modda mobil alt menü payı: paneller menünün bitiminden       */
-/* yukarıda başlar; menü hiçbir panelin üstüne binmez.                 */
+/* Alt menü gizleme (başlıktaki göz düğmesi / komut)                   */
+/* Menü DOM'dan tamamen kalktığı için paneller altta menüye hiç         */
+/* değmez; hiçbir dolgu hilesi gerekmez. Kalıcıdır (ayar).              */
 /* ------------------------------------------------------------------ */
 
-body.is-mobile .split-notes-panes {
-  padding-bottom: calc(var(--size-4-12) + env(safe-area-inset-bottom, 0px)) !important;
-}
-
-body.is-mobile .split-notes .markdown-preview-view {
-  padding-bottom: var(--size-4-4);
-}
-
-/* Tam ekranda alt menü gizli olduğu için pay gerekmez */
-body.split-notes-fullscreen .split-notes-panes {
-  padding-bottom: 0;
+body.split-notes-hide-navbar .mobile-navbar,
+body.split-notes-hide-navbar .mobile-toolbar {
+  display: none !important;
 }
