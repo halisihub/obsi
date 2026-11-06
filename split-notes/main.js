@@ -42,7 +42,8 @@ const DEFAULT_SETTINGS = {
   linkTarget: "other",      // other: bağlantı diğer panelde açılır | same: aynı panelde
   hidePaneHeadersInFullscreen: false, // gerçek tam ekran: panel başlıkları da gizlenir
   pairs: [],                // kayıtlı not çiftleri: [{ name, leftPath, rightPath }]
-  hideNavbar: false         // mobil alt menü gizli mi
+  hideNavbar: false,        // mobil alt menü gizli mi
+  hideStatusBar: false     // üst çubuk (saat alanı) gizli mi
 };
 
 /* ================================================================== */
@@ -182,11 +183,9 @@ class SplitNotesView extends ItemView {
       this.toggleFullscreen();
     });
 
-    /* EN SAĞ düğme: mobil alt menüyü gizle/göster */
-    this.navBtn = this.addAction("eye-off", "Alt menüyü gizle/göster", () => {
-      this.toggleNavbar();
-    });
+    /* Kayıtlı görünür durumları uygula (düğme YOK: komut ve ayarlardan yönetilir) */
     this.applyNavbar();
+    this.applyStatusBar();
 
     /* Tam ekrandan çıkış: iki parmakla küçültme (pinch-in) hareketi,
        masaüstünde Esc tuşu. Yüzen düğme YOK. */
@@ -237,13 +236,18 @@ class SplitNotesView extends ItemView {
   applyNavbar() {
     const on = this.plugin.settings.hideNavbar;
     document.body.classList.toggle("split-notes-hide-navbar", on);
-    if (this.navBtn) {
-      this.navBtn.classList.toggle("is-on", on);
-      this.navBtn.setAttribute(
-        "aria-label",
-        on ? "Alt menü gizli — göstermek için dokun" : "Alt menüyü gizle"
-      );
-    }
+  }
+
+  /* Üst çubuk (saat alanı) gizle/göster — kalıcı ayar */
+  toggleStatusBar() {
+    this.plugin.settings.hideStatusBar = !this.plugin.settings.hideStatusBar;
+    void this.plugin.saveSettings();
+    this.applyStatusBar();
+  }
+
+  applyStatusBar() {
+    const on = this.plugin.settings.hideStatusBar;
+    document.body.classList.toggle("split-notes-hide-statusbar", on);
   }
 
   /* Tam ekran: üst/alt çubukları gizle, paneller tüm ekranı kaplasın */
@@ -836,6 +840,33 @@ class SplitNotesSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Alt menüyü gizle (mobil)")
+      .setDesc("Mobildeki alt gezinme menüsünü tamamen gizler; paneller ekranın dibine kadar iner. Komut paletinden de değiştirilebilir.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.hideNavbar)
+          .onChange(async (value) => {
+            this.plugin.settings.hideNavbar = value;
+            await this.plugin.saveSettings();
+            this.plugin.applyChromelessToActiveView();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Üst çubuğu gizle (saat alanı)")
+      .setDesc("Uygulamanın en üstünde saat çubuğu için ayrılan boşluğu kaldırır; notlar en tepeden başlar. Komut paletinden de değiştirilebilir.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.hideStatusBar)
+          .onChange(async (value) => {
+            this.plugin.settings.hideStatusBar = value;
+            await this.plugin.saveSettings();
+            const view = this.plugin.getActiveView();
+            if (view) view.applyStatusBar();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Gerçek tam ekran")
       .setDesc("Tam ekranda panel başlıkları da gizlenir; ekranda yalnızca iki not kalır. Çıkmak için iki parmakla küçültme hareketi yapın (masaüstünde Esc).")
       .addToggle((toggle) =>
@@ -998,6 +1029,35 @@ class SplitNotesPlugin extends Plugin {
       }
     });
 
+    /* ---- Yeni: üst çubuk (saat alanı) gizle/göster ---- */
+    this.addCommand({
+      id: "toggle-statusbar",
+      name: "Üst çubuğu (saat alanı) gizle/göster",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.toggleStatusBar();
+        return true;
+      }
+    });
+
+    /* ---- Yeni: tam ekranda panel başlıklarını gizle/göster ---- */
+    this.addCommand({
+      id: "toggle-pane-headers",
+      name: "Tam ekranda panel başlıklarını gizle/göster",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) {
+          this.settings.hidePaneHeadersInFullscreen =
+            !this.settings.hidePaneHeadersInFullscreen;
+          void this.saveSettings();
+          this.applyChromelessToActiveView();
+        }
+        return true;
+      }
+    });
+
     /* ---- Yeni: panel geçmişi ---- */
     this.addCommand({
       id: "history-back",
@@ -1027,6 +1087,7 @@ class SplitNotesPlugin extends Plugin {
 
   onunload() {
     document.body.classList.remove("split-notes-hide-navbar");
+    document.body.classList.remove("split-notes-hide-statusbar");
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
 
