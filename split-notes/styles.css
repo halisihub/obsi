@@ -245,3 +245,73 @@ body.split-notes-fullscreen .view-content {
 body.split-notes-fullscreen .view-content {
   height: 100% !important;
 }
+
+/* ------------------------------------------------------------------ */
+/* Mobil panel odağı: alt ortada geçiş kumandası                        */
+/* ------------------------------------------------------------------ */
+
+.split-notes {
+  position: relative;
+}
+
+.split-notes-switch {
+  position: absolute;
+  bottom: calc(var(--size-4-4) + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  display: none;
+  align-items: center;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1);
+  border-radius: var(--radius-l);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-s);
+}
+
+/* Dar ekranda ve tam ekranda görünür */
+@media (max-width: 600px) {
+  .split-notes-switch {
+    display: flex;
+  }
+}
+
+body.split-notes-fullscreen .split-notes-switch {
+  display: flex;
+}
+
+.split-notes-switch-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--size-2-2) var(--size-4-2);
+  border-radius: var(--radius-m);
+  color: var(--text-muted);
+  cursor: pointer;
+  background: transparent;
+}
+
+.split-notes-switch-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.split-notes-switch-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+/* Odak modu: odaklanılan panel tüm alanı kaplar, diğeri gizlenir */
+.split-notes.focus-left .split-notes-pane.right {
+  display: none;
+}
+
+.split-notes.focus-right .split-notes-pane.left {
+  display: none;
+}
+
+.split-notes.focus-left .split-notes-pane.left,
+.split-notes.focus-right .split-notes-pane.right {
+  flex: 1 1 100%;
+}
