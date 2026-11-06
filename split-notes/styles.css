@@ -256,3 +256,17 @@ body.split-notes-hide-navbar .mobile-navbar,
 body.split-notes-hide-navbar .mobile-toolbar {
   display: none !important;
 }
+
+/* ------------------------------------------------------------------ */
+/* Üst çubuk (saat alanı) gizleme — komut ve ayarlardan yönetilir      */
+/* ------------------------------------------------------------------ */
+
+body.split-notes-hide-statusbar .app-container {
+  padding-top: 0 !important;
+  margin-top: 0 !important;
+}
+
+body.split-notes-hide-statusbar .titlebar,
+body.split-notes-hide-statusbar .mobile-navbar-top {
+  display: none !important;
+}
