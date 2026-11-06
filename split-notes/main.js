@@ -15,6 +15,9 @@
  *      kaydırma, panel boyutlandırma (ayırıcı), odak modu, panelde arama,
  *      akıllı bağlantı hedefi, not bazlı kaydırma hafızası, görsel desteği,
  *      kalıp çifti, backlink sayacı + çok sayıda hata düzeltmesi.
+ * 3.4.1: "Tam ekranda saati göster" ayarı — saat görünsün ve paneller onun
+ *      altından başlasın; üst pay yatay/dikey ekran için AYRI AYRI ölçülür.
+ *      Çift istatistikleri ("N kez yüklendi") her zaman görünür.
  */
 
 const {
@@ -46,6 +49,7 @@ const DEFAULT_SETTINGS = {
   hideNavbar: false,        // mobil alt menü gizli mi
   hideStatusBar: false,     // üst çubuk (saat alanı) gizli mi
   fullscreenTopInset: 0,   // tam ekranda saat çubuğu için üst boşluk (px) — 0: otomatik
+  showClockInFullscreen: true, // tam ekranda saat görünsün ve üst pay ayrılsın
   paneRatio: 0.5,           // panellerin boyut oranı (0.1–0.9)
   pairUsage: {},            // çift başına yükleme sayısı (sıralama için)
   pairTemplate: ""         // kalıp çifti: "{ad} ↔ {ad} çözüm"
@@ -1289,8 +1293,23 @@ class SplitNotesSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Tam ekranda saati göster")
+      .setDesc("Açık: tam ekranda da saat çubuğu görünür ve paneller onun altından başlar; üst pay yatay ve dikey ekran için ayrı ayrı ölçülür. Kapalı: saat gizlenir, paneller en tepeden başlar.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showClockInFullscreen)
+          .onChange(async (value) => {
+            this.plugin.settings.showClockInFullscreen = value;
+            await this.plugin.saveSettings();
+            const v = this.plugin.getActiveSplitView();
+            this.plugin.applyNativeFullscreenMode(!!(v && v.isFullscreen));
+            this.plugin.applyTopInset();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Çift şablonu (kalıp)")
-      .setDesc("Örn. \u201C{ad} ↔ {ad} çözüm\u201D — panel menüsündeki \u201CKalıptan eşleştir\u201D ile bir panele not yükleyip diğer panele kalıba uyan notu otomatik açar.")
+      .setDesc("Örnek: {ad} ↔ {ad} çözüm. Kullanım: bir panele bir not aç, panel menüsünden (⋮) \u201CKalıptan eşleştir\u201D'e dokun. Eklenti notun adını kalıba yerleştirir (örn. \u201CSınav ↔ Sınav çözüm\u201D) ve uyan diğer notu karşı panele otomatik açar. Sol panelden çağırırsan sağ panele, sağdan çağırırsan sola açar.")
       .addText((text) =>
         text
           .setPlaceholder("{ad} ↔ {ad} çözüm")
@@ -1333,7 +1352,7 @@ class SplitNotesSettingTab extends PluginSettingTab {
         .setName(pair.name)
         .setDesc(
           (pair.leftPath || "—") + "  ↔  " + (pair.rightPath || "—") +
-          (usage ? "   •   " + usage + " kez yüklendi" : "")
+          "   •   " + usage + " kez yüklendi"
         );
       s.addButton((btn) =>
         btn.setButtonText("Yükle").onClick(async () => {
@@ -1376,6 +1395,12 @@ class SplitNotesPlugin extends Plugin {
         this.applyTopInset();
       })
     );
+
+    /* Cihaz döndürülünce / pencere boyutlanınca yatay-dikey için ayrı
+       ölçülen saat payını yeniden uygula. */
+    const reapplyInset = debounce(() => this.applyTopInset(), 250, true);
+    this.registerDomEvent(window, "orientationchange", reapplyInset);
+    this.registerDomEvent(window, "resize", reapplyInset);
 
     this.registerView(VIEW_TYPE, (leaf) => new SplitNotesView(leaf, this));
 
@@ -1679,13 +1704,20 @@ class SplitNotesPlugin extends Plugin {
 
   applyNativeFullscreenMode(enabled) {
     if (enabled) {
-      this.tryNativeStatusBarHide()
-        .then((ok) => {
-          /* Native saat gizlendiyse üstte ayrıca pay bırakmaya gerek
-             yok; CSS bu sınıfla payı sıfırlar. */
-          document.body.classList.toggle("split-notes-native-fs", !!ok);
-        })
-        .catch(() => {});
+      if (this.settings.showClockInFullscreen) {
+        /* Ayar açık: native saat çubuğu GÖRÜNÜR kalır, paneller saat
+           için ayrılan payın altından başlar (yön bazlı ölçüm). */
+        document.body.classList.remove("split-notes-native-fs");
+        this.tryNativeStatusBarShow();
+      } else {
+        this.tryNativeStatusBarHide()
+          .then((ok) => {
+            /* Native saat gizlendiyse üstte ayrıca pay bırakmaya gerek
+               yok; CSS bu sınıfla payı sıfırlar. */
+            document.body.classList.toggle("split-notes-native-fs", !!ok);
+          })
+          .catch(() => {});
+      }
       this.tryBrowserFullscreenHide();
     } else {
       document.body.classList.remove("split-notes-native-fs");
@@ -1738,15 +1770,28 @@ class SplitNotesPlugin extends Plugin {
       document.body.style.setProperty("--split-notes-top-inset", manual + "px");
       return;
     }
-    /* Tam ekran sınıfı açıkken app-container dolgusu 0'a iner ve ölçüm
-       yanıltıcı 0 çıkar; bu durumda ölçme, son ölçümü koru. */
-    if (document.body.classList.contains("split-notes-fullscreen")) return;
-    const measured = this.measureSafeAreaTop();
-    if (measured > 0) this._lastMeasuredTop = measured;
-    document.body.style.setProperty(
-      "--split-notes-top-inset",
-      (this._lastMeasuredTop || 0) + "px"
-    );
+    /* Saat payı yatay ve dikey ekranda FARKLIDIR; her yön için ayrı
+       ölçüm saklanır ve cihaz döndürülünce doğru olan uygulanır. */
+    const key =
+      (typeof screen !== "undefined" && screen.orientation &&
+        String(screen.orientation.type || "").startsWith("landscape")) ||
+      window.innerWidth > window.innerHeight
+        ? "landscape"
+        : "portrait";
+    if (!this._measuredTop) this._measuredTop = {};
+    /* native-fs açıkken (saat gizliyken) app-container dolgusu 0'a iner
+       ve ölçüm yanıltıcı 0 çıkar; o durumda ölçme, saklanan değeri koru. */
+    const clockHidden =
+      document.body.classList.contains("split-notes-fullscreen") &&
+      document.body.classList.contains("split-notes-native-fs");
+    if (!clockHidden) {
+      const measured = this.measureSafeAreaTop();
+      if (measured > 0) this._measuredTop[key] = measured;
+    }
+    const fallback = key === "portrait" ? "landscape" : "portrait";
+    const inset =
+      this._measuredTop[key] || this._measuredTop[fallback] || 0;
+    document.body.style.setProperty("--split-notes-top-inset", inset + "px");
   }
 
   /* Şu anda görüntülenen görünüm çift not görünümü mü? */
