@@ -11,8 +11,10 @@
  *  - Dosya yaşam döngüsü (düzenle / yeniden adlandır / sil) izlenir,
  *    paneller canlı güncellenir.
  *
- * 3.0: Çiftler (kayıtlı not çiftleri), mobil panel odağı, panele gönderme,
- *      panel başına gezinme geçmişi.
+ * 3.4: sık kullanılan çift önerileri, hızlı çift menüsü, başlık bazlı senkron
+ *      kaydırma, panel boyutlandırma (ayırıcı), odak modu, panelde arama,
+ *      akıllı bağlantı hedefi, not bazlı kaydırma hafızası, görsel desteği,
+ *      kalıp çifti, backlink sayacı + çok sayıda hata düzeltmesi.
  */
 
 const {
@@ -27,7 +29,6 @@ const {
   Plugin,
   PluginSettingTab,
   Setting,
-  TextComponent,
   debounce,
   setIcon
 } = require("obsidian");
@@ -44,8 +45,14 @@ const DEFAULT_SETTINGS = {
   pairs: [],                // kayıtlı not çiftleri: [{ name, leftPath, rightPath }]
   hideNavbar: false,        // mobil alt menü gizli mi
   hideStatusBar: false,     // üst çubuk (saat alanı) gizli mi
-  fullscreenTopInset: 0    // tam ekranda saat çubuğu için üst boşluk (px)
+  fullscreenTopInset: 0,   // tam ekranda saat çubuğu için üst boşluk (px) — 0: otomatik
+  paneRatio: 0.5,           // panellerin boyut oranı (0.1–0.9)
+  pairUsage: {},            // çift başına yükleme sayısı (sıralama için)
+  pairTemplate: ""         // kalıp çifti: "{ad} ↔ {ad} çözüm"
 };
+
+/* Panel başına gezinme geçmişinin uzunluk sınırı */
+const HISTORY_LIMIT = 100;
 
 /* ================================================================== */
 /* Not seçici — çekirdek hızlı arama (FuzzySuggestModal)               */
@@ -76,7 +83,7 @@ class PairPickerModal extends FuzzySuggestModal {
     this.setPlaceholder("Yüklenecek çifti seçin...");
   }
   getItems() {
-    return this.plugin.settings.pairs;
+    return this.plugin.getSortedPairs();
   }
   getItemText(pair) {
     const l = pair.leftPath ? pair.leftPath.split("/").pop() : "—";
@@ -147,6 +154,12 @@ class SplitNotesView extends ItemView {
     this.lastSide = null;
     // Bu görünümün tam ekran durumu (gövde sınıfı yalnızca etkinken uygulanır)
     this.isFullscreen = false;
+    // Not bazlı kaydırma konumu hafızası (oturum boyunca)
+    this.scrollMemory = new Map();
+    // renderPane yarış koşuluna karşı artan kuşak numarası
+    this.renderGeneration = 0;
+    // Panelde arama durumu
+    this.search = { term: null, side: null, hits: 0, index: -1 };
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -165,7 +178,9 @@ class SplitNotesView extends ItemView {
 
     this.panesEl = this.contentEl.createDiv({ cls: "split-notes-panes" });
     this.buildPane("left");
+    this.buildDivider();
     this.buildPane("right");
+    this.applyPaneRatio();
 
     /* Çekirdek görünüm başlığı düğmesi: senkron kaydırmayı
        tek dokunuşla aç/kapat (ayarlara girmeden). */
@@ -176,9 +191,10 @@ class SplitNotesView extends ItemView {
     });
     this.updateSyncButton();
 
-    /* Çekirdek görünüm başlığı düğmesi: kayıtlı çiftleri yükle */
-    this.addAction("layers", "Çift yükle...", () => {
-      this.pickPair();
+    /* Çekirdek görünüm başlığı düğmesi: hızlı çift erişimi — sık
+       kullanılanlar üstte sıralı menü */
+    this.addAction("layers", "Çiftler", (evt) => {
+      this.showQuickPairs(evt);
     });
 
     /* Çekirdek görünüm başlığı düğmesi: tam ekran */
@@ -210,6 +226,7 @@ class SplitNotesView extends ItemView {
 
   async onClose() {
     document.body.classList.remove("split-notes-fullscreen");
+    document.body.classList.remove("split-notes-native-fs");
     this.plugin.applyNativeFullscreenMode(false);
     for (const side of ["left", "right"]) {
       if (this.components[side]) this.components[side].unload();
@@ -234,10 +251,6 @@ class SplitNotesView extends ItemView {
   toggleNavbar() {
     this.plugin.settings.hideNavbar = !this.plugin.settings.hideNavbar;
     void this.plugin.saveSettings();
-    this.applyNavbar();
-  }
-
-  applyNavbar() {
     this.plugin.updateGlobalClasses();
   }
 
@@ -245,10 +258,6 @@ class SplitNotesView extends ItemView {
   toggleStatusBar() {
     this.plugin.settings.hideStatusBar = !this.plugin.settings.hideStatusBar;
     void this.plugin.saveSettings();
-    this.applyStatusBar();
-  }
-
-  applyStatusBar() {
     this.plugin.updateGlobalClasses();
   }
 
@@ -300,6 +309,8 @@ class SplitNotesView extends ItemView {
 
     this.registerDomEvent(document, "keydown", (evt) => {
       if (evt.key !== "Escape") return;
+      /* Modal/menü açıkken Esc onları kapatmalı; tam ekrana dokunma */
+      if (document.querySelector(".modal-container, .menu")) return;
       if (!document.body.classList.contains("split-notes-fullscreen")) return;
       if (this.app.workspace.getActiveViewOfType(ItemView) === this) {
         this.toggleFullscreen();
@@ -362,7 +373,15 @@ class SplitNotesView extends ItemView {
 
   setTitle(side, file) {
     const title = this.panes[side].querySelector(".split-notes-pane-title");
-    if (title) title.setText(file ? file.basename : "Not seçilmedi");
+    if (!title) return;
+    if (!file) {
+      title.setText("Not seçilmedi");
+      return;
+    }
+    /* Backlink sayacı: bu nota giden bağlantı sayısı */
+    const backlinks = this.app.metadataCache.getBacklinksForFile(file);
+    const count = backlinks ? Object.keys(backlinks.data || {}).length : 0;
+    title.setText(count ? file.basename + "  (" + count + ")" : file.basename);
   }
 
   /* ---------------------------------------------------------------- */
@@ -375,10 +394,18 @@ class SplitNotesView extends ItemView {
   /* setFile: kullanıcı gezinmesi — geçmişe eklenir. */
   setFile(side, file) {
     this.lastSide = side;
+    this.rememberScroll(side);
     this.files[side] = file;
     this.pushHistory(side, file);
     this.renderPane(side);
     void this.saveState();
+  }
+
+  /* Giden notun kaydırma konumunu hafızaya al */
+  rememberScroll(side) {
+    if (!this.files[side]) return;
+    const el = this.scrolls[side];
+    if (el) this.scrollMemory.set(this.files[side].path, el.scrollTop);
   }
 
   /* loadWithoutHistory: programatik yükleme (geri/ileri, çift yükleme). */
@@ -398,6 +425,14 @@ class SplitNotesView extends ItemView {
     const f = this.files.left;
     this.files.left = this.files.right;
     this.files.right = f;
+    /* Geçmiş, kaydırma izleri ve son panel de yer değiştirir */
+    const h = this.history.left;
+    this.history.left = this.history.right;
+    this.history.right = h;
+    const l = this.lastScrollTops.left;
+    this.lastScrollTops.left = this.lastScrollTops.right;
+    this.lastScrollTops.right = l;
+    if (this.lastSide) this.lastSide = this.lastSide === "left" ? "right" : "left";
     this.renderPane("left");
     this.renderPane("right");
     void this.saveState();
@@ -411,6 +446,251 @@ class SplitNotesView extends ItemView {
     }
     this.showEmptyState(side);
     void this.saveState();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Panel boyutlandırma + odak modu                                    */
+  /* ---------------------------------------------------------------- */
+  buildDivider() {
+    const divider = this.panesEl.createDiv({ cls: "split-notes-divider" });
+    divider.setAttribute("aria-label", "Panel boyutunu değiştir");
+    let dragging = false;
+
+    const onDrag = (clientX, clientY) => {
+      const rect = this.panesEl.getBoundingClientRect();
+      let ratio;
+      if (this.isColumnLayout()) {
+        ratio = (clientY - rect.top) / Math.max(1, rect.height);
+      } else {
+        ratio = (clientX - rect.left) / Math.max(1, rect.width);
+      }
+      ratio = Math.min(0.9, Math.max(0.1, ratio));
+      this.plugin.settings.paneRatio = Math.round(ratio * 100) / 100;
+      this.applyPaneRatio();
+    };
+
+    divider.addEventListener("pointerdown", (evt) => {
+      dragging = true;
+      divider.addClass("is-dragging");
+      evt.preventDefault();
+    });
+    this.registerDomEvent(document, "pointermove", (evt) => {
+      if (!dragging) return;
+      onDrag(evt.clientX, evt.clientY);
+    });
+    this.registerDomEvent(document, "pointerup", () => {
+      if (!dragging) return;
+      dragging = false;
+      divider.removeClass("is-dragging");
+      void this.plugin.saveSettings();
+    });
+
+    /* Çift tıklama: panelleri eşitle */
+    divider.addEventListener("dblclick", () => this.focusPane(null));
+  }
+
+  isColumnLayout() {
+    return this.contentEl.hasClass("is-column") ||
+      (this.plugin.settings.splitDirection !== "row" &&
+        this.panesEl.clientWidth <= 600);
+  }
+
+  applyPaneRatio() {
+    const r = Math.min(0.9, Math.max(0.1, Number(this.plugin.settings.paneRatio) || 0.5));
+    if (this.panes.left) this.panes.left.style.flexGrow = String(r);
+    if (this.panes.right) {
+      this.panes.right.style.flexGrow = String(Math.round((1 - r) * 100) / 100);
+    }
+  }
+
+  /* Odak modu: side null = eşit boyut */
+  focusPane(side) {
+    this.plugin.settings.paneRatio = side ? (side === "left" ? 0.8 : 0.2) : 0.5;
+    this.applyPaneRatio();
+    void this.plugin.saveSettings();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Hızlı çift erişimi: kullanım sırasına göre menü                    */
+  /* ---------------------------------------------------------------- */
+  showQuickPairs(evt) {
+    const menu = new Menu();
+    const pairs = this.plugin.getSortedPairs();
+    if (!pairs.length) {
+      menu.addItem((item) =>
+        item.setTitle("Kayıtlı çift yok").setIcon("info").setDisabled(true)
+      );
+    } else {
+      for (const pair of pairs.slice(0, 7)) {
+        menu.addItem((item) =>
+          item
+            .setTitle(pair.name)
+            .setIcon("layers")
+            .onClick(() => this.loadPair(pair))
+        );
+      }
+      if (pairs.length > 7) {
+        menu.addSeparator();
+        menu.addItem((item) =>
+          item
+            .setTitle("Tümünü ara...")
+            .setIcon("search")
+            .onClick(() => this.pickPair())
+        );
+      }
+    }
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Mevcut panelleri çift olarak kaydet")
+        .setIcon("bookmark-plus")
+        .onClick(() => this.saveCurrentAsPair())
+    );
+    if (evt && typeof evt === "object" && "pageX" in evt) {
+      menu.showAtMouseEvent(evt);
+    } else {
+      const rect = (this.fsBtn || this.contentEl).getBoundingClientRect();
+      menu.showAtPosition({ x: rect.left, y: rect.bottom + 4 });
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Kalıp çifti: "{ad} ↔ {ad} çözüm" biçiminde otomatik eşleştirme    */
+  /* ---------------------------------------------------------------- */
+  applyPairTemplate(side) {
+    const tpl = (this.plugin.settings.pairTemplate || "").trim();
+    const file = this.files[side];
+    if (!tpl || !file) {
+      new Notice(tpl ? "Önce panele not seçin." : "Ayarda kalıp tanımlı değil.");
+      return;
+    }
+    const parts = tpl.split("↔").map((s) => s.trim());
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      new Notice("Kalıp hatalı: \u201C{ad} ↔ {ad} çözüm\u201D biçiminde olmalı.");
+      return;
+    }
+    const renderTpl = (t, name) => t.replace(/\{ad\}/g, name);
+    const candidate = renderTpl(side === "left" ? parts[1] : parts[0], file.basename);
+    const found = this.app.vault.getMarkdownFiles().find(
+      (f) => f.basename === candidate
+    );
+    if (found) this.setFile(side === "left" ? "right" : "left", found);
+    else new Notice("Eş bulunamadı: " + candidate);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Panelde arama (bul + vurgula)                                      */
+  /* ---------------------------------------------------------------- */
+  searchInPane(side) {
+    const modal = new Modal(this.app);
+    modal.contentEl.createEl("h3", { text: "Panelde ara" });
+    let input = null;
+    new Setting(modal.contentEl)
+      .setName("Metin")
+      .addText((text) => {
+        input = text;
+        text.setValue(this.search.term || "");
+      });
+    new Setting(modal.contentEl).addButton((btn) =>
+      btn.setButtonText("Ara").setCta().onClick(() => {
+        const term = ((input && input.getValue()) || "").trim();
+        modal.close();
+        if (term) this.runSearch(side, term);
+      })
+    );
+    modal.open();
+  }
+
+  runSearch(side, term) {
+    const previewEl = this.panes[side].querySelector(".markdown-preview-view");
+    if (!previewEl) return;
+    /* Aynı terim tekrar aranırsa sonraki sonuca atla */
+    if (this.search.term === term && this.search.side === side && this.search.hits) {
+      this.search.index = (this.search.index + 1) % this.search.hits;
+      this.jumpToHit(side);
+      new Notice("Sonuç " + (this.search.index + 1) + "/" + this.search.hits);
+      return;
+    }
+    this.clearSearch(side);
+    const search = { term, side, hits: 0, index: 0 };
+    const walker = document.createTreeWalker(previewEl, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) =>
+        n.parentElement && n.parentElement.closest("a")
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    const lower = term.toLowerCase();
+    for (const node of nodes) {
+      const idx = node.nodeValue.toLowerCase().indexOf(lower);
+      if (idx === -1) continue;
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + term.length);
+      const mark = document.createElement("span");
+      mark.classList.add("split-notes-search-hit");
+      try {
+        range.surroundContents(mark);
+        search.hits++;
+      } catch (e) { /* düğüm sınırında bölünemiyorsa atla */ }
+    }
+    this.search = search;
+    if (!search.hits) {
+      new Notice("Bulunamadı: " + term);
+      this.search.term = null;
+      return;
+    }
+    this.jumpToHit(side);
+    new Notice(term + " — " + search.hits + " sonuç");
+  }
+
+  jumpToHit(side) {
+    const hits = this.panes[side].querySelectorAll(".split-notes-search-hit");
+    if (!hits.length) return;
+    hits.forEach((h) => h.classList.remove("is-active"));
+    const hit = hits[this.search.index % hits.length];
+    hit.classList.add("is-active");
+    const r = hit.getBoundingClientRect();
+    const el = this.scrolls[side];
+    const elR = el.getBoundingClientRect();
+    el.scrollTop += r.top - elR.top - el.clientHeight / 3;
+  }
+
+  clearSearch(side) {
+    this.panes[side].querySelectorAll(".split-notes-search-hit").forEach((h) => {
+      const parent = h.parentElement;
+      if (!parent) return;
+      parent.replaceChild(document.createTextNode(h.textContent || ""), h);
+      parent.normalize();
+    });
+    this.search = { term: null, side: null, hits: 0, index: -1 };
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Başlık bazlı senkron kaydırma yardımcıları                         */
+  /* ---------------------------------------------------------------- */
+  currentHeadingIndex(side) {
+    const el = this.scrolls[side];
+    const headings = el.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    if (!headings.length) return null;
+    const elTop = el.getBoundingClientRect().top;
+    let idx = 0;
+    headings.forEach((h, i) => {
+      if (h.getBoundingClientRect().top - elTop <= 8) idx = i;
+    });
+    return idx;
+  }
+
+  headingTop(side, index) {
+    if (index === null) return null;
+    const el = this.scrolls[side];
+    const headings = el.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    if (!headings.length) return null;
+    const h = headings[Math.min(index, headings.length - 1)];
+    const r = h.getBoundingClientRect();
+    const elR = el.getBoundingClientRect();
+    return Math.max(0, el.scrollTop + r.top - elR.top - 8);
   }
 
   /* ---------------------------------------------------------------- */
@@ -429,9 +709,15 @@ class SplitNotesView extends ItemView {
       if (!path) return;
       const f = this.app.vault.getAbstractFileByPath(path);
       if (f && "basename" in f) this.setFile(side, f);
+      else new Notice("Çiftteki not bulunamadı: " + path);
     };
     load("left", pair.leftPath);
     load("right", pair.rightPath);
+    /* Sık kullanılan çift önerileri için kullanımı say */
+    const usage = this.plugin.settings.pairUsage || {};
+    usage[pair.name] = (usage[pair.name] || 0) + 1;
+    this.plugin.settings.pairUsage = usage;
+    void this.plugin.saveSettings();
   }
 
   /* Mevcut panelleri ad sorarak kaydet */
@@ -467,6 +753,8 @@ class SplitNotesView extends ItemView {
     /* İleriyi kes, yeni girdiyi ekle */
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(path);
+    /* Geçmişi sınırlı tut: en eski girdiler düşer */
+    if (h.stack.length > HISTORY_LIMIT) h.stack = h.stack.slice(-HISTORY_LIMIT);
     h.index = h.stack.length - 1;
   }
 
@@ -552,6 +840,39 @@ class SplitNotesView extends ItemView {
         .setIcon("arrow-left-right")
         .onClick(() => this.swap())
     );
+    menu.addItem((item) =>
+      item
+        .setTitle("Bu panele odaklan")
+        .setIcon("zoom-in")
+        .onClick(() => this.focusPane(side))
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Panelleri eşitle")
+        .setIcon("columns-2")
+        .onClick(() => this.focusPane(null))
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Kalıptan eşleştir")
+        .setIcon("wand")
+        .onClick(() => this.applyPairTemplate(side))
+    );
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Panelde ara...")
+        .setIcon("search")
+        .onClick(() => this.searchInPane(side))
+    );
+    if (this.search.term) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Aramayı temizle")
+          .setIcon("x-circle")
+          .onClick(() => this.clearSearch(side))
+      );
+    }
     if (file) {
       menu.addSeparator();
       menu.addItem((item) =>
@@ -568,6 +889,7 @@ class SplitNotesView extends ItemView {
   /* Render — kaydırma konumunu koru                                   */
   /* ---------------------------------------------------------------- */
   async renderPane(side) {
+    const gen = ++this.renderGeneration;
     const file = this.files[side];
     this.setTitle(side, file);
     const previewEl = this.panes[side].querySelector(".markdown-preview-view");
@@ -585,6 +907,27 @@ class SplitNotesView extends ItemView {
 
     const previousScrollTop = this.scrolls[side].scrollTop;
     previewEl.empty();
+
+    /* Görseller çekirdek görüntüleyici gibi gösterilir */
+    const ext = file.extension ? file.extension.toLowerCase() : "";
+    if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"].includes(ext)) {
+      previewEl.createEl("img", {
+        cls: "split-notes-image",
+        attr: { src: this.app.vault.getResourcePath(file), alt: file.basename }
+      });
+      this.scrolls[side].scrollTop = 0;
+      return;
+    }
+    if (ext === "pdf") {
+      const note = previewEl.createDiv({ cls: "empty-state" });
+      note.createDiv({ cls: "empty-state-title", text: "PDF önizleme" });
+      note.createDiv({
+        cls: "empty-state-content",
+        text: "PDF'ler bu panelde gösterilemiyor. \u201CYeni sekmede aç\u201D ile açın."
+      });
+      return;
+    }
+
     const sizer = previewEl.createDiv({ cls: "markdown-preview-sizer" });
 
     const component = new Component();
@@ -600,8 +943,17 @@ class SplitNotesView extends ItemView {
         file.path,
         component
       );
+      /* Bu render bu sırada bayatladıysa (başka not seçildi) sonucu
+         boşuna uygulamayı bırak; yenisi zaten yolda. */
+      if (gen !== this.renderGeneration || this.files[side] !== file) {
+        component.unload();
+        if (this.components[side] === component) this.components[side] = null;
+        return;
+      }
       this.wireLinks(side, previewEl, file);
-      this.scrolls[side].scrollTop = previousScrollTop;
+      const saved = this.scrollMemory.get(file.path);
+      this.scrolls[side].scrollTop =
+        Number.isFinite(saved) ? saved : previousScrollTop;
     } catch (err) {
       console.error("split-notes: render hatası", err);
       new Notice("Not görüntülenemedi: " + file.path);
@@ -623,14 +975,34 @@ class SplitNotesView extends ItemView {
       }
       if (evt.shiftKey || (evt.metaKey || evt.ctrlKey)) {
         void this.app.workspace.openLinkText(dest.path, "/", false);
-      } else {
-        /* Ayara göre: aynı panelde ya da diğer panelde aç */
-        const targetSide =
-          this.plugin.settings.linkTarget === "other"
-            ? (side === "left" ? "right" : "left")
-            : side;
-        this.setFile(targetSide, dest);
+        return;
       }
+      /* Akıllı hedef: not zaten bir panelde açıksa o paneli tazele,
+         değilse diğer panelde aç. */
+      if (this.plugin.settings.linkTarget === "smart") {
+        if (this.files.left && this.files.left.path === dest.path) {
+          this.renderPane("left");
+          return;
+        }
+        if (this.files.right && this.files.right.path === dest.path) {
+          this.renderPane("right");
+          return;
+        }
+        this.setFile(side === "left" ? "right" : "left", dest);
+        return;
+      }
+      const targetSide =
+        this.plugin.settings.linkTarget === "other"
+          ? (side === "left" ? "right" : "left")
+          : side;
+      this.setFile(targetSide, dest);
+    });
+
+    /* Harici linkler sistem tarayıcısında açılır */
+    el.on("click", "a.external-link, a[href^='http']", (evt, target) => {
+      evt.preventDefault();
+      const href = target.getAttribute("data-href") || target.getAttribute("href");
+      if (href) window.open(href, "_blank");
     });
   }
 
@@ -661,7 +1033,13 @@ class SplitNotesView extends ItemView {
       if (!otherEl) return;
 
       let targetTop;
-      if (this.plugin.settings.syncScrollMode === "delta") {
+      if (this.plugin.settings.syncScrollMode === "heading") {
+        /* Başlık bazlı: görünür başlık sırası diğer panelde eşlenir */
+        const hIndex = this.currentHeadingIndex(side);
+        const otherHeadingTop = this.headingTop(other, hIndex);
+        if (otherHeadingTop === null) return;
+        targetTop = otherHeadingTop;
+      } else if (this.plugin.settings.syncScrollMode === "delta") {
         /* Aynı mesafe: ne kadar kaydırırsan diğer panel o kadar kayar */
         const targetMax = Math.max(0, otherEl.scrollHeight - otherEl.clientHeight);
         targetTop = Math.min(Math.max(0, otherEl.scrollTop + delta), targetMax);
@@ -712,6 +1090,18 @@ class SplitNotesView extends ItemView {
       const h = this.history[side];
       h.stack = h.stack.map((p) => (p === oldPath ? file.path : p));
     }
+    /* Kayıtlı çiftlerdeki eski yolları da güncelle (yoksa çift bozulur) */
+    let pairsChanged = false;
+    for (const pair of this.plugin.settings.pairs) {
+      if (pair.leftPath === oldPath) { pair.leftPath = file.path; pairsChanged = true; }
+      if (pair.rightPath === oldPath) { pair.rightPath = file.path; pairsChanged = true; }
+    }
+    if (pairsChanged) void this.plugin.saveSettings();
+    /* Kaydırma hafızasındaki eski anahtarı taşı */
+    if (this.scrollMemory.has(oldPath)) {
+      this.scrollMemory.set(file.path, this.scrollMemory.get(oldPath));
+      this.scrollMemory.delete(oldPath);
+    }
   }
 
   onDelete(file) {
@@ -735,14 +1125,13 @@ class SplitNotesView extends ItemView {
 
   async restoreState() {
     const { leftPath, rightPath } = this.plugin.settings;
-    if (leftPath) {
-      const f = this.app.vault.getAbstractFileByPath(leftPath);
-      if (f && "basename" in f) this.setFile("left", f);
-    }
-    if (rightPath) {
-      const f = this.app.vault.getAbstractFileByPath(rightPath);
-      if (f && "basename" in f) this.setFile("right", f);
-    }
+    const load = (side, path) => {
+      if (!path) return;
+      const f = this.app.vault.getAbstractFileByPath(path);
+      if (f && "basename" in f) this.loadWithoutHistory(side, f);
+    };
+    load("left", leftPath);
+    load("right", rightPath);
   }
 
   get debouncedRender() {
@@ -813,12 +1202,13 @@ class SplitNotesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Senkron kaydırma türü")
-      .setDesc("Aynı mesafe: ne kadar kaydırırsan diğer panel de o kadar kayar. Aynı oran: paneller oransal konumda eşlenir (uzun/kısa not uyumu).")
+      .setDesc("Aynı mesafe: ne kadar kaydırırsan diğer panel de o kadar kayar. Aynı oran: paneller oransal konumda eşlenir. Başlık bazlı: paneller aynı sıradaki başlıkta hizalanır.")
       .addDropdown((drop) =>
         drop
           .addOptions({
             delta: "Aynı mesafe (ne kadar kaydırsan o kadar)",
-            proportional: "Aynı oran (oransal konum)"
+            proportional: "Aynı oran (oransal konum)",
+            heading: "Başlık bazlı (aynı sıradaki başlıkta hizala)"
           })
           .setValue(this.plugin.settings.syncScrollMode)
           .onChange(async (value) => {
@@ -834,7 +1224,8 @@ class SplitNotesSettingTab extends PluginSettingTab {
         drop
           .addOptions({
             other: "Diğer panelde aç",
-            same: "Aynı panelde aç"
+            same: "Aynı panelde aç",
+            smart: "Akıllı: açıksa o panelde, yoksa diğerinde"
           })
           .setValue(this.plugin.settings.linkTarget)
           .onChange(async (value) => {
@@ -897,6 +1288,19 @@ class SplitNotesSettingTab extends PluginSettingTab {
           });
       });
 
+    new Setting(containerEl)
+      .setName("Çift şablonu (kalıp)")
+      .setDesc("Örn. \u201C{ad} ↔ {ad} çözüm\u201D — panel menüsündeki \u201CKalıptan eşleştir\u201D ile bir panele not yükleyip diğer panele kalıba uyan notu otomatik açar.")
+      .addText((text) =>
+        text
+          .setPlaceholder("{ad} ↔ {ad} çözüm")
+          .setValue(this.plugin.settings.pairTemplate || "")
+          .onChange(async (value) => {
+            this.plugin.settings.pairTemplate = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
     /* ---------------------------------------------------------------- */
     /* Çiftler yönetimi                                                  */
     /* ---------------------------------------------------------------- */
@@ -909,7 +1313,7 @@ class SplitNotesSettingTab extends PluginSettingTab {
           .setButtonText("Kaydet")
           .setCta()
           .onClick(() => {
-            const view = this.plugin.getActiveView();
+            const view = this.plugin.getFirstView();
             if (view) view.saveCurrentAsPair();
             else new Notice("Önce çift not görünümünü açın.");
           })
@@ -924,9 +1328,13 @@ class SplitNotesSettingTab extends PluginSettingTab {
     }
 
     for (const pair of this.plugin.settings.pairs.slice()) {
+      const usage = (this.plugin.settings.pairUsage || {})[pair.name] || 0;
       const s = new Setting(containerEl)
         .setName(pair.name)
-        .setDesc((pair.leftPath || "—") + "  ↔  " + (pair.rightPath || "—"));
+        .setDesc(
+          (pair.leftPath || "—") + "  ↔  " + (pair.rightPath || "—") +
+          (usage ? "   •   " + usage + " kez yüklendi" : "")
+        );
       s.addButton((btn) =>
         btn.setButtonText("Yükle").onClick(async () => {
           const view = await this.plugin.activateView();
@@ -1115,12 +1523,65 @@ class SplitNotesPlugin extends Plugin {
         return true;
       }
     });
+
+    /* ---- 3.4: odak modu ve panelde arama ---- */
+    this.addCommand({
+      id: "focus-left",
+      name: "Sol panele odaklan",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.focusPane("left");
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "focus-right",
+      name: "Sağ panele odaklan",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.focusPane("right");
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "balance-panes",
+      name: "Panelleri eşitle",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.focusPane(null);
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "search-in-left",
+      name: "Sol panelde ara",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.searchInPane("left");
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "search-in-right",
+      name: "Sağ panelde ara",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.searchInPane("right");
+        return true;
+      }
+    });
   }
 
   onunload() {
     document.body.classList.remove("split-notes-hide-navbar");
     document.body.classList.remove("split-notes-hide-statusbar");
     document.body.classList.remove("split-notes-fullscreen");
+    document.body.classList.remove("split-notes-native-fs");
     this.applyNativeFullscreenMode(false);
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
@@ -1128,37 +1589,51 @@ class SplitNotesPlugin extends Plugin {
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     if (!Array.isArray(this.settings.pairs)) this.settings.pairs = [];
+    if (typeof this.settings.pairUsage !== "object" || this.settings.pairUsage === null) {
+      this.settings.pairUsage = {};
+    }
+    if (!Number.isFinite(this.settings.paneRatio)) this.settings.paneRatio = 0.5;
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
   }
 
-  /* Yön ayarı değişince açık görünümü anında güncelle */
+  /* Yön ayarı değişince TÜM açık çift görünümlerini güncelle */
   applyLayout() {
-    const view = this.getActiveView();
-    if (!view) return;
-    view.contentEl.removeClass("is-row", "is-column");
-    if (this.settings.splitDirection === "row") view.contentEl.addClass("is-row");
-    if (this.settings.splitDirection === "column") view.contentEl.addClass("is-column");
+    this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
+      if (!(leaf.view instanceof SplitNotesView)) return;
+      const el = leaf.view.contentEl;
+      el.removeClass("is-row", "is-column");
+      const d = this.settings.splitDirection;
+      if (d === "row") el.addClass("is-row");
+      if (d === "column") el.addClass("is-column");
+      leaf.view.applyPaneRatio();
+    });
   }
 
-  /* "Gerçek tam ekran" ayarı değişince açık görünümü güncelle */
+  /* "Gerçek tam ekran" ayarı değişince tüm çift görünümlerini güncelle */
   applyChromelessToActiveView() {
-    const view = this.getActiveView();
-    if (!view) return;
-    view.applyChromeless(view.isFullscreen);
+    this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
+      if (leaf.view instanceof SplitNotesView) {
+        leaf.view.applyChromeless(leaf.view.isFullscreen);
+      }
+    });
   }
 
   tryNativeStatusBarHide() {
     try {
-      const statusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
+      const statusBar =
+        window.Capacitor && window.Capacitor.Plugins &&
+        window.Capacitor.Plugins.StatusBar;
       if (statusBar && typeof statusBar.hide === "function") {
-        statusBar.hide();
+        const r = statusBar.hide();
+        return Promise.resolve(r || true).then(() => true).catch(() => false);
       }
     } catch (e) {
       // no-op: native bridge may be absent or unsupported
     }
+    return Promise.resolve(false);
   }
 
   tryNativeStatusBarShow() {
@@ -1173,22 +1648,22 @@ class SplitNotesPlugin extends Plugin {
   }
 
   tryBrowserFullscreenHide() {
+    const root = document.documentElement;
+    if (!root || typeof root.requestFullscreen !== "function") return false;
     try {
-      const root = document.documentElement;
-      if (!root || typeof root.requestFullscreen !== "function") return false;
-      root.requestFullscreen({ navigationUI: "hide" });
+      /* navigationUI desteklenmiyorsa kural dışı düşebilir; promise
+         reddini yakala ki konsol kirlenmesin. */
+      const p = root.requestFullscreen({ navigationUI: "hide" });
+      if (p && typeof p.catch === "function") p.catch(() => {});
       return true;
     } catch (e) {
       try {
-        const root = document.documentElement;
-        if (root && typeof root.requestFullscreen === "function") {
-          root.requestFullscreen();
-          return true;
-        }
+        const p = root.requestFullscreen();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+        return true;
       } catch (e2) {
-        // no-op
+        return false;
       }
-      return false;
     }
   }
 
@@ -1204,9 +1679,16 @@ class SplitNotesPlugin extends Plugin {
 
   applyNativeFullscreenMode(enabled) {
     if (enabled) {
-      this.tryNativeStatusBarHide();
+      this.tryNativeStatusBarHide()
+        .then((ok) => {
+          /* Native saat gizlendiyse üstte ayrıca pay bırakmaya gerek
+             yok; CSS bu sınıfla payı sıfırlar. */
+          document.body.classList.toggle("split-notes-native-fs", !!ok);
+        })
+        .catch(() => {});
       this.tryBrowserFullscreenHide();
     } else {
+      document.body.classList.remove("split-notes-native-fs");
       this.tryNativeStatusBarShow();
       this.exitBrowserFullscreen();
     }
@@ -1252,8 +1734,19 @@ class SplitNotesPlugin extends Plugin {
      tutmuyorsa gerekli bir yedektir. */
   applyTopInset() {
     const manual = Math.max(0, Math.round(Number(this.settings.fullscreenTopInset) || 0));
-    const value = manual > 0 ? manual : this.measureSafeAreaTop();
-    document.body.style.setProperty("--split-notes-top-inset", value + "px");
+    if (manual > 0) {
+      document.body.style.setProperty("--split-notes-top-inset", manual + "px");
+      return;
+    }
+    /* Tam ekran sınıfı açıkken app-container dolgusu 0'a iner ve ölçüm
+       yanıltıcı 0 çıkar; bu durumda ölçme, son ölçümü koru. */
+    if (document.body.classList.contains("split-notes-fullscreen")) return;
+    const measured = this.measureSafeAreaTop();
+    if (measured > 0) this._lastMeasuredTop = measured;
+    document.body.style.setProperty(
+      "--split-notes-top-inset",
+      (this._lastMeasuredTop || 0) + "px"
+    );
   }
 
   /* Şu anda görüntülenen görünüm çift not görünümü mü? */
@@ -1275,15 +1768,33 @@ class SplitNotesPlugin extends Plugin {
       "split-notes-hide-statusbar",
       on && !!this.settings.hideStatusBar
     );
-    document.body.classList.toggle(
-      "split-notes-fullscreen",
-      on && !!(view && view.isFullscreen)
-    );
+    const fullscreenNow = on && !!(view && view.isFullscreen);
+    /* Tam ekrandan başka görünüme geçildiyse native saat çubuğunu ve
+       tarayıcı tam ekranını geri getir (yoksa saat gizli kalır). */
+    if (!fullscreenNow && document.body.classList.contains("split-notes-fullscreen")) {
+      this.applyNativeFullscreenMode(false);
+    }
+    document.body.classList.toggle("split-notes-fullscreen", fullscreenNow);
   }
 
+  /* Komutlar yalnızca ETKİN çift görünümü hedefler; arka plandaki
+     sekmedeki görünümü değil. */
   getActiveView() {
+    return this.getActiveSplitView();
+  }
+
+  /* Arka planda açık olsa bile ilk çift görünümü (ayarlar sekmesi için) */
+  getFirstView() {
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     return leaf && leaf.view instanceof SplitNotesView ? leaf.view : null;
+  }
+
+  /* Çiftleri kullanım sayısına göre sırala (sık kullanılan önce) */
+  getSortedPairs() {
+    const usage = this.settings.pairUsage || {};
+    return this.settings.pairs
+      .slice()
+      .sort((a, b) => (usage[b.name] || 0) - (usage[a.name] || 0));
   }
 
   async activateView() {
