@@ -218,9 +218,8 @@ body.split-notes-fullscreen .split-notes.is-chromeless .split-notes-pane {
 /* Tam ekranda üst boşluk: tüm kapsayıcıları sıfırla                  */
 /* ------------------------------------------------------------------ */
 
-/* Masaüstü başlık çubuğunu gizle. Mobilde app-container üst dolgusu
-   safe-area/status bar alanını ayırmak için korunur ve aşağıda yeniden
-   açıkça hesaplanır. */
+/* Masaüstü başlık çubuğunu gizle. Mobilde üst güvenli alan aşağıda
+   yatay/dikey yön için ayrı hesaplanır. */
 body.split-notes-fullscreen .titlebar {
   display: none !important;
 }
@@ -230,9 +229,8 @@ body.split-notes-fullscreen .app-container {
   margin: 0 !important;
 }
 
-/* Mobilde üst kapsayıcıyı sıfırlamak içeriği sistem durum çubuğunun
-   altına sokuyordu. Güvenli alanı app-container üzerinde ayır ki tüm
-   Obsidian görünümü (yalnızca eklenti paneli değil) doğru konumlansın. */
+/* Mobil portre: saklanan inset ve canlı CSS safe-area değerlerinin
+   en büyüğünü kullan. */
 body.is-mobile.split-notes-fullscreen .app-container {
   padding-top: max(
     var(--split-notes-top-inset, 0px),
@@ -286,16 +284,10 @@ body.split-notes-hide-statusbar .mobile-navbar-top {
 }
 
 /* ------------------------------------------------------------------ */
-/* Saat çubuğu payı (tam ekran): dört kaynağın en büyüğü kullanılır.   */
-/*  --status-bar-height: Obsidian'ın Android'de tanımladığı resmi      */
-/*    durum çubuğu yüksekliği değişkeni (~40px)                        */
-/*  --safe-area-inset-top: Obsidian'ın mobilde tanımladığı pay        */
-/*  env(safe-area-inset-top): webview'in bildirdiği pay               */
-/*  --split-notes-top-inset: eklentinin ölçtüğü / manuel ayar          */
+/* Saat çubuğu payı (tam ekran): kaynaklar platforma göre değişebilir. */
 /* ------------------------------------------------------------------ */
 
-/* Masaüstünde gerekiyorsa özel üst payı uygula. Mobilde pay app-container
-   üzerinde ayrıldığı için burada tekrar padding verip çift boşluk yaratma. */
+/* Masaüstünde gerekiyorsa üst payı görünümün içine uygula. */
 body.split-notes-fullscreen:not(.is-mobile) .split-notes {
   padding-top: max(
     var(--split-notes-top-inset, 0px),
@@ -309,13 +301,18 @@ body.is-mobile.split-notes-fullscreen .split-notes {
   padding-top: 0;
 }
 
-/* Yatay ekran: JS tarafından dikey konumdayken ölçülüp saklanan inset
-   ve status-bar-height burada kullanılmaz. WebView safe-area değeri
-   CSS tarafından anlık çözülür; böylece portre modundaki üst boşluk
-   yataya taşınmaz. Android WebView safe-area vermiyorsa 0 kullanılır;
-   cihazına özel bir değer gerekiyorsa ayardan manuel inset verilebilir. */
+/* Yatay ekran için ayrı, canlı CSS hesabı:
+   portre yönünde JS'in sakladığı --split-notes-top-inset'i özellikle
+   kullanmıyoruz. Bunun yerine yatay WebView safe-area ve Obsidian/theme
+   CSS değişkenlerinin mevcut (yön değişince güncellenen) değerlerini
+   karşılaştırıyoruz. env tek başına kullanılırsa Android'de 0 çıkıp
+   gerekli boşluğu tamamen kaldırabiliyordu. */
 @media (orientation: landscape) {
   body.is-mobile.split-notes-fullscreen .app-container {
-    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-top: max(
+      env(safe-area-inset-top, 0px),
+      var(--safe-area-inset-top, 0px),
+      var(--status-bar-height, 0px)
+    ) !important;
   }
 }
