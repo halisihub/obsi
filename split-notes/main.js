@@ -43,7 +43,8 @@ const DEFAULT_SETTINGS = {
   hidePaneHeadersInFullscreen: false, // gerçek tam ekran: panel başlıkları da gizlenir
   pairs: [],                // kayıtlı not çiftleri: [{ name, leftPath, rightPath }]
   hideNavbar: false,        // mobil alt menü gizli mi
-  hideStatusBar: false     // üst çubuk (saat alanı) gizli mi
+  hideStatusBar: false,     // üst çubuk (saat alanı) gizli mi
+  fullscreenTopInset: 0    // tam ekranda saat çubuğu için üst boşluk (px)
 };
 
 /* ================================================================== */
@@ -144,6 +145,8 @@ class SplitNotesView extends ItemView {
     };
     // Son kullanıcı etkileşiminin olduğu panel (geçmiş komutları için)
     this.lastSide = null;
+    // Bu görünümün tam ekran durumu (gövde sınıfı yalnızca etkinken uygulanır)
+    this.isFullscreen = false;
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -183,9 +186,8 @@ class SplitNotesView extends ItemView {
       this.toggleFullscreen();
     });
 
-    /* Kayıtlı görünür durumları uygula (düğme YOK: komut ve ayarlardan yönetilir) */
-    this.applyNavbar();
-    this.applyStatusBar();
+    /* Gövde sınıfları yalnızca bu görünüm etkinken uygulanır */
+    this.plugin.updateGlobalClasses();
 
     /* Tam ekrandan çıkış: iki parmakla küçültme (pinch-in) hareketi,
        masaüstünde Esc tuşu. Yüzen düğme YOK. */
@@ -207,6 +209,7 @@ class SplitNotesView extends ItemView {
   }
 
   async onClose() {
+    document.body.classList.remove("split-notes-fullscreen");
     for (const side of ["left", "right"]) {
       if (this.components[side]) this.components[side].unload();
       const pending = this.programmaticScrolls[side];
@@ -234,8 +237,7 @@ class SplitNotesView extends ItemView {
   }
 
   applyNavbar() {
-    const on = this.plugin.settings.hideNavbar;
-    document.body.classList.toggle("split-notes-hide-navbar", on);
+    this.plugin.updateGlobalClasses();
   }
 
   /* Üst çubuk (saat alanı) gizle/göster — kalıcı ayar */
@@ -246,14 +248,14 @@ class SplitNotesView extends ItemView {
   }
 
   applyStatusBar() {
-    const on = this.plugin.settings.hideStatusBar;
-    document.body.classList.toggle("split-notes-hide-statusbar", on);
+    this.plugin.updateGlobalClasses();
   }
 
   /* Tam ekran: üst/alt çubukları gizle, paneller tüm ekranı kaplasın */
   toggleFullscreen() {
-    const on = !document.body.classList.contains("split-notes-fullscreen");
-    document.body.classList.toggle("split-notes-fullscreen", on);
+    const on = !this.isFullscreen;
+    this.isFullscreen = on;
+    this.plugin.updateGlobalClasses();
     if (this.fsBtn) this.fsBtn.classList.toggle("is-on", on);
     this.applyChromeless(on);
   }
@@ -848,9 +850,7 @@ class SplitNotesSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.hideNavbar = value;
             await this.plugin.saveSettings();
-            const view = this.plugin.getActiveView();
-            if (view) view.applyNavbar();
-            else document.body.classList.toggle("split-notes-hide-navbar", value);
+            this.plugin.updateGlobalClasses();
           })
       );
 
@@ -863,8 +863,7 @@ class SplitNotesSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.hideStatusBar = value;
             await this.plugin.saveSettings();
-            const view = this.plugin.getActiveView();
-            if (view) view.applyStatusBar();
+            this.plugin.updateGlobalClasses();
           })
       );
 
@@ -880,6 +879,21 @@ class SplitNotesSettingTab extends PluginSettingTab {
             this.plugin.applyChromelessToActiveView();
           })
       );
+
+    new Setting(containerEl)
+      .setName("Tam ekran üst payı (piksel)")
+      .setDesc("Tam ekranda panellerin saat çubuğunun altından başlaması için üstte bırakılacak boşluk. Deneyerek bul: 30-50 piksel civarı uygundur. 0 = boşluk yok.")
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text
+          .setValue(String(this.plugin.settings.fullscreenTopInset ?? 0))
+          .onChange(async (value) => {
+            this.plugin.settings.fullscreenTopInset =
+              Math.max(0, Math.round(Number(value) || 0));
+            await this.plugin.saveSettings();
+            this.plugin.applyTopInset();
+          });
+      });
 
     /* ---------------------------------------------------------------- */
     /* Çiftler yönetimi                                                  */
@@ -938,6 +952,16 @@ class SplitNotesSettingTab extends PluginSettingTab {
 class SplitNotesPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
+    this.applyTopInset();
+
+    /* Gövde sınıfları yalnızca çift görünüm etkinken açık: başka bir
+       nota geçildiğinde alt menü / üst çubuk / tam ekran geri gelir. */
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => this.updateGlobalClasses())
+    );
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => this.updateGlobalClasses())
+    );
 
     this.registerView(VIEW_TYPE, (leaf) => new SplitNotesView(leaf, this));
 
@@ -1090,6 +1114,7 @@ class SplitNotesPlugin extends Plugin {
   onunload() {
     document.body.classList.remove("split-notes-hide-navbar");
     document.body.classList.remove("split-notes-hide-statusbar");
+    document.body.classList.remove("split-notes-fullscreen");
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
 
@@ -1115,8 +1140,38 @@ class SplitNotesPlugin extends Plugin {
   applyChromelessToActiveView() {
     const view = this.getActiveView();
     if (!view) return;
-    view.applyChromeless(
-      document.body.classList.contains("split-notes-fullscreen")
+    view.applyChromeless(view.isFullscreen);
+  }
+
+  /* Tam ekran üst payı: cihazın saat çubuğu yüksekliği (px). Webview
+     env()'i boş döndürdüğü için değer kullanıcı tarafından ayarlanır. */
+  applyTopInset() {
+    const v = Math.max(0, Math.round(Number(this.settings.fullscreenTopInset) || 0));
+    document.body.style.setProperty("--split-notes-top-inset", v + "px");
+  }
+
+  /* Şu anda görüntülenen görünüm çift not görünümü mü? */
+  getActiveSplitView() {
+    const view = this.app.workspace.getActiveViewOfType(SplitNotesView);
+    return view instanceof SplitNotesView ? view : null;
+  }
+
+  /* Gövde sınıfları YALNIZCA çift görünüm etkinken uygulanır; başka
+     bir nota/viewa geçilince hepsi kaldırılır. */
+  updateGlobalClasses() {
+    const view = this.getActiveSplitView();
+    const on = !!view;
+    document.body.classList.toggle(
+      "split-notes-hide-navbar",
+      on && !!this.settings.hideNavbar
+    );
+    document.body.classList.toggle(
+      "split-notes-hide-statusbar",
+      on && !!this.settings.hideStatusBar
+    );
+    document.body.classList.toggle(
+      "split-notes-fullscreen",
+      on && !!(view && view.isFullscreen)
     );
   }
 
