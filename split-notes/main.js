@@ -848,7 +848,9 @@ class SplitNotesSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.hideNavbar = value;
             await this.plugin.saveSettings();
-            this.plugin.applyChromelessToActiveView();
+            const view = this.plugin.getActiveView();
+            if (view) view.applyNavbar();
+            else document.body.classList.toggle("split-notes-hide-navbar", value);
           })
       );
 
