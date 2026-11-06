@@ -1160,6 +1160,15 @@ class SplitNotesPlugin extends Plugin {
       }
     } catch (e) { /* yok say */ }
     try {
+      /* Obsidian'ın resmi değişkenleri: Android'de --status-bar-height,
+         mobilde --safe-area-inset-top tanımlıdır. */
+      const styles = getComputedStyle(document.body);
+      for (const name of ["--status-bar-height", "--safe-area-inset-top"]) {
+        const v = parseFloat(styles.getPropertyValue(name));
+        if (Number.isFinite(v) && v > measured) measured = v;
+      }
+    } catch (e) { /* yok say */ }
+    try {
       const probe = document.createElement("div");
       probe.style.cssText =
         "position:absolute;top:0;left:0;visibility:hidden;pointer-events:none;" +
