@@ -218,7 +218,9 @@ body.split-notes-fullscreen .split-notes.is-chromeless .split-notes-pane {
 /* Tam ekranda üst boşluk: tüm kapsayıcıları sıfırla                  */
 /* ------------------------------------------------------------------ */
 
-/* Masaüstü başlık çubuğu ve iOS güvenli alan dolguları dahil */
+/* Masaüstü başlık çubuğunu gizle. Mobilde app-container üst dolgusu
+   safe-area/status bar alanını ayırmak için korunur ve aşağıda yeniden
+   açıkça hesaplanır. */
 body.split-notes-fullscreen .titlebar {
   display: none !important;
 }
@@ -226,6 +228,18 @@ body.split-notes-fullscreen .titlebar {
 body.split-notes-fullscreen .app-container {
   padding: 0 !important;
   margin: 0 !important;
+}
+
+/* Mobilde üst kapsayıcıyı sıfırlamak içeriği sistem durum çubuğunun
+   altına sokuyordu. Güvenli alanı app-container üzerinde ayır ki tüm
+   Obsidian görünümü (yalnızca eklenti paneli değil) doğru konumlansın. */
+body.is-mobile.split-notes-fullscreen .app-container {
+  padding-top: max(
+    var(--split-notes-top-inset, 0px),
+    env(safe-area-inset-top, 0px),
+    var(--safe-area-inset-top, 0px),
+    var(--status-bar-height, 0px)
+  ) !important;
 }
 
 /* Workspace katmanlarındaki tüm dolgu/kenar boşlukları sıfırla;
@@ -280,11 +294,17 @@ body.split-notes-hide-statusbar .mobile-navbar-top {
 /*  --split-notes-top-inset: eklentinin ölçtüğü / manuel ayar          */
 /* ------------------------------------------------------------------ */
 
-body.split-notes-fullscreen .split-notes {
+/* Masaüstünde gerekiyorsa özel üst payı uygula. Mobilde pay app-container
+   üzerinde ayrıldığı için burada tekrar padding verip çift boşluk yaratma. */
+body.split-notes-fullscreen:not(.is-mobile) .split-notes {
   padding-top: max(
     var(--split-notes-top-inset, 0px),
     env(safe-area-inset-top, 0px),
     var(--safe-area-inset-top, 0px),
     var(--status-bar-height, 0px)
   );
+}
+
+body.is-mobile.split-notes-fullscreen .split-notes {
+  padding-top: 0;
 }
