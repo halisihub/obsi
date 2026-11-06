@@ -10,18 +10,24 @@
  *  - Hiçbir sabit renk yok; yalnızca tema değişkenleri.
  *  - Dosya yaşam döngüsü (düzenle / yeniden adlandır / sil) izlenir,
  *    paneller canlı güncellenir.
+ *
+ * 3.0: Çiftler (kayıtlı not çiftleri), mobil panel odağı, panele gönderme,
+ *      panel başına gezinme geçmişi.
  */
 
 const {
+  ButtonComponent,
   Component,
   FuzzySuggestModal,
   ItemView,
   MarkdownRenderer,
   Menu,
+  Modal,
   Notice,
   Plugin,
   PluginSettingTab,
   Setting,
+  TextComponent,
   debounce,
   setIcon
 } = require("obsidian");
@@ -34,7 +40,8 @@ const DEFAULT_SETTINGS = {
   syncScroll: false,        // senkron kaydırma açık/kapalı
   syncScrollMode: "delta",  // delta: aynı mesafe | proportional: aynı oran
   linkTarget: "other",      // other: bağlantı diğer panelde açılır | same: aynı panelde
-  hidePaneHeadersInFullscreen: false // gerçek tam ekran: panel başlıkları da gizlenir
+  hidePaneHeadersInFullscreen: false, // gerçek tam ekran: panel başlıkları da gizlenir
+  pairs: []                 // kayıtlı not çiftleri: [{ name, leftPath, rightPath }]
 };
 
 /* ================================================================== */
@@ -57,6 +64,61 @@ class NoteSuggestModal extends FuzzySuggestModal {
   }
 }
 
+/* Kayıtlı çift seçici */
+class PairPickerModal extends FuzzySuggestModal {
+  constructor(app, plugin, onPick) {
+    super(app);
+    this.plugin = plugin;
+    this.onPick = onPick;
+    this.setPlaceholder("Yüklenecek çifti seçin...");
+  }
+  getItems() {
+    return this.plugin.settings.pairs;
+  }
+  getItemText(pair) {
+    const l = pair.leftPath ? pair.leftPath.split("/").pop() : "—";
+    const r = pair.rightPath ? pair.rightPath.split("/").pop() : "—";
+    return pair.name + "  (" + l + " ↔ " + r + ")";
+  }
+  onChooseItem(pair) {
+    this.onPick(pair);
+  }
+}
+
+/* Çift adı soran küçük çekirdek modalı */
+class PairNameModal extends Modal {
+  constructor(app, defaultName, onSave) {
+    super(app);
+    this.defaultName = defaultName;
+    this.onSave = onSave;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: "Çift olarak kaydet" });
+
+    new Setting(contentEl)
+      .setName("Ad")
+      .addText((text) => {
+        this.input = text;
+        text.setValue(this.defaultName);
+        text.inputEl.style.width = "100%";
+      });
+
+    const btns = new Setting(contentEl);
+    new ButtonComponent(btns.controlEl)
+      .setButtonText("Kaydet")
+      .setCta()
+      .onClick(() => {
+        const name = (this.input.getValue() || "").trim() || this.defaultName;
+        this.close();
+        this.onSave(name);
+      });
+    new ButtonComponent(btns.controlEl)
+      .setButtonText("İptal")
+      .onClick(() => this.close());
+  }
+}
+
 /* ================================================================== */
 /* Ana görünüm                                                         */
 /* ================================================================== */
@@ -73,6 +135,15 @@ class SplitNotesView extends ItemView {
     this.programmaticScrolls = { left: null, right: null };
     // Senkron kaydırma için her panelin son konumu (delta hesabı)
     this.lastScrollTops = { left: 0, right: 0 };
+    // Panel başına gezinme geçmişi (tarayıcı geçmişi gibi)
+    this.history = {
+      left: { stack: [], index: -1 },
+      right: { stack: [], index: -1 }
+    };
+    // Son kullanıcı etkileşiminin olduğu panel (geçmiş komutları için)
+    this.lastSide = null;
+    // Panel odağı: null (ikisi) | "left" | "right"
+    this.focus = null;
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -85,13 +156,17 @@ class SplitNotesView extends ItemView {
     this.contentEl.addClass("split-notes");
 
     /* Yön: kullanıcı seçimi varsa sınıfla sabitle, yoksa CSS'teki
-       medya sorgusu (dar ekran = alt alta) geçerli olur. */
+       medya sorgusu (dar ekranda = alt alta) geçerli olur. */
     if (settings.splitDirection === "row") this.contentEl.addClass("is-row");
     if (settings.splitDirection === "column") this.contentEl.addClass("is-column");
 
     this.panesEl = this.contentEl.createDiv({ cls: "split-notes-panes" });
     this.buildPane("left");
     this.buildPane("right");
+
+    /* Mobil panel odağı: alt ortada küçük geçiş kumandası.
+       Yalnızca dar ekran ve/veya tam ekranda görünür (styles.css). */
+    this.buildSwitch();
 
     /* Çekirdek görünüm başlığı düğmesi: senkron kaydırmayı
        tek dokunuşla aç/kapat (ayarlara girmeden). */
@@ -101,6 +176,11 @@ class SplitNotesView extends ItemView {
       this.updateSyncButton();
     });
     this.updateSyncButton();
+
+    /* Çekirdek görünüm başlığı düğmesi: kayıtlı çiftleri yükle */
+    this.addAction("layers", "Çift yükle...", () => {
+      this.pickPair();
+    });
 
     /* Çekirdek görünüm başlığı düğmesi: tam ekran */
     this.fsBtn = this.addAction("maximize-2", "Tam ekran", () => {
@@ -200,6 +280,47 @@ class SplitNotesView extends ItemView {
   }
 
   /* ---------------------------------------------------------------- */
+  /* Mobil panel odağı (geçiş kumandası)                               */
+  /* ---------------------------------------------------------------- */
+  buildSwitch() {
+    this.switchEl = this.contentEl.createDiv({ cls: "split-notes-switch" });
+
+    const mk = (side, label) => {
+      const btn = this.switchEl.createDiv({ cls: "split-notes-switch-btn" });
+      setIcon(btn, side === "left" ? "panel-left" : "panel-right");
+      btn.setAttribute("aria-label", label);
+      btn.addEventListener("click", () => {
+        this.setFocus(this.focus === side ? null : side);
+      });
+      return btn;
+    };
+    this.switchBtns = {
+      left: mk("left", "Sol panele odaklan (tekrar dokun: ikisi de)"),
+      right: mk("right", "Sağ panele odaklan (tekrar dokun: ikisi de)")
+    };
+  }
+
+  setFocus(side) {
+    this.focus = side;
+    this.contentEl.toggleClass("focus-left", side === "left");
+    this.contentEl.toggleClass("focus-right", side === "right");
+    this.updateSwitchUI();
+  }
+
+  updateSwitchUI() {
+    if (!this.switchBtns) return;
+    this.switchBtns.left.classList.toggle("is-active", this.focus === "left");
+    this.switchBtns.right.classList.toggle("is-active", this.focus === "right");
+  }
+
+  /* Odağı döngüle: sol → sağ → ikisi */
+  cycleFocus() {
+    if (this.focus === "left") this.setFocus("right");
+    else if (this.focus === "right") this.setFocus(null);
+    else this.setFocus("left");
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Panel inşası — çekirdek yaprak başlığı + okuma içeriği            */
   /* ---------------------------------------------------------------- */
   buildPane(side) {
@@ -264,7 +385,17 @@ class SplitNotesView extends ItemView {
     new NoteSuggestModal(this.app, (file) => this.setFile(side, file)).open();
   }
 
+  /* setFile: kullanıcı gezinmesi — geçmişe eklenir. */
   setFile(side, file) {
+    this.lastSide = side;
+    this.files[side] = file;
+    this.pushHistory(side, file);
+    this.renderPane(side);
+    void this.saveState();
+  }
+
+  /* loadWithoutHistory: programatik yükleme (geri/ileri, çift yükleme). */
+  loadWithoutHistory(side, file) {
     this.files[side] = file;
     this.renderPane(side);
     void this.saveState();
@@ -296,6 +427,90 @@ class SplitNotesView extends ItemView {
   }
 
   /* ---------------------------------------------------------------- */
+  /* Çiftler (kayıtlı not çiftleri)                                    */
+  /* ---------------------------------------------------------------- */
+  pickPair() {
+    if (!this.plugin.settings.pairs.length) {
+      new Notice("Kayıtlı çift yok. Panelleri açıp \u201CMevcut panelleri çift olarak kaydet\u201D komutunu kullanın.");
+      return;
+    }
+    new PairPickerModal(this.app, this.plugin, (pair) => this.loadPair(pair)).open();
+  }
+
+  loadPair(pair) {
+    const load = (side, path) => {
+      if (!path) return;
+      const f = this.app.vault.getAbstractFileByPath(path);
+      if (f && "basename" in f) this.setFile(side, f);
+    };
+    load("left", pair.leftPath);
+    load("right", pair.rightPath);
+  }
+
+  /* Mevcut panelleri ad sorarak kaydet */
+  saveCurrentAsPair() {
+    if (!this.files.left && !this.files.right) {
+      new Notice("Kaydedilecek not yok: paneller boş.");
+      return;
+    }
+    const nameOf = (file) => (file ? file.basename : "—");
+    const defaultName = nameOf(this.files.left) + " ↔ " + nameOf(this.files.right);
+    new PairNameModal(this.app, defaultName, (name) => {
+      const existing = this.plugin.settings.pairs.find((p) => p.name === name);
+      const entry = {
+        name,
+        leftPath: this.files.left ? this.files.left.path : null,
+        rightPath: this.files.right ? this.files.right.path : null
+      };
+      if (existing) Object.assign(existing, entry);
+      else this.plugin.settings.pairs.push(entry);
+      void this.plugin.saveSettings();
+      new Notice(existing ? "Çift güncellendi: " + name : "Çift kaydedildi: " + name);
+    }).open();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Panel geçmişi (geri / ileri)                                      */
+  /* ---------------------------------------------------------------- */
+  pushHistory(side, file) {
+    if (!file) return;
+    const h = this.history[side];
+    const path = file.path;
+    if (h.stack[h.index] === path) return;
+    /* İleriyi kes, yeni girdiyi ekle */
+    h.stack = h.stack.slice(0, h.index + 1);
+    h.stack.push(path);
+    h.index = h.stack.length - 1;
+  }
+
+  canGoBack(side) {
+    return this.history[side].index > 0;
+  }
+
+  canGoForward(side) {
+    const h = this.history[side];
+    return h.index < h.stack.length - 1;
+  }
+
+  navigate(side, dir) {
+    const h = this.history[side];
+    const next = h.index + dir;
+    if (next < 0 || next >= h.stack.length) return;
+    h.index = next;
+    const f = this.app.vault.getAbstractFileByPath(h.stack[next]);
+    if (f && "basename" in f) {
+      this.loadWithoutHistory(side, f);
+    } else {
+      new Notice("Not bulunamadı: " + h.stack[next]);
+    }
+  }
+
+  /* Geçmiş komutları için son kullanılan panel */
+  getLastSide() {
+    return this.lastSide || "left";
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Çekirdek sağ tık menüsü                                           */
   /* ---------------------------------------------------------------- */
   paneMenu(evt, side) {
@@ -316,11 +531,33 @@ class SplitNotesView extends ItemView {
       );
       menu.addSeparator();
     }
+    /* Gezinme geçmişi */
+    menu.addItem((item) =>
+      item
+        .setTitle("Geri")
+        .setIcon("chevrons-left")
+        .setDisabled(!this.canGoBack(side))
+        .onClick(() => this.navigate(side, -1))
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("İleri")
+        .setIcon("chevrons-right")
+        .setDisabled(!this.canGoForward(side))
+        .onClick(() => this.navigate(side, 1))
+    );
+    menu.addSeparator();
     menu.addItem((item) =>
       item
         .setTitle("Not seç...")
         .setIcon("search")
         .onClick(() => this.chooseFile(side))
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Mevcut panelleri çift olarak kaydet")
+        .setIcon("bookmark")
+        .onClick(() => this.saveCurrentAsPair())
     );
     menu.addItem((item) =>
       item
@@ -484,6 +721,9 @@ class SplitNotesView extends ItemView {
         this.setTitle(side, file);
         void this.saveState();
       }
+      /* Geçmişteki eski yolları da güncelle */
+      const h = this.history[side];
+      h.stack = h.stack.map((p) => (p === oldPath ? file.path : p));
     }
   }
 
@@ -628,6 +868,55 @@ class SplitNotesSettingTab extends PluginSettingTab {
             this.plugin.applyChromelessToActiveView();
           })
       );
+
+    /* ---------------------------------------------------------------- */
+    /* Çiftler yönetimi                                                  */
+    /* ---------------------------------------------------------------- */
+    containerEl.createEl("h4", { text: "Çiftler" });
+    new Setting(containerEl)
+      .setName("Mevcut panelleri çift olarak kaydet")
+      .setDesc("Açık görünümdeki iki notu, ad vererek kaydeder.")
+      .addButton((btn) =>
+        btn
+          .setButtonText("Kaydet")
+          .setCta()
+          .onClick(() => {
+            const view = this.plugin.getActiveView();
+            if (view) view.saveCurrentAsPair();
+            else new Notice("Önce çift not görünümünü açın.");
+          })
+      );
+
+    if (!this.plugin.settings.pairs.length) {
+      containerEl.createDiv({
+        cls: "setting-item-description",
+        text: "Henüz kayıtlı çift yok."
+      });
+      return;
+    }
+
+    for (const pair of this.plugin.settings.pairs.slice()) {
+      const s = new Setting(containerEl)
+        .setName(pair.name)
+        .setDesc((pair.leftPath || "—") + "  ↔  " + (pair.rightPath || "—"));
+      s.addButton((btn) =>
+        btn.setButtonText("Yükle").onClick(async () => {
+          const view = await this.plugin.activateView();
+          view.loadPair(pair);
+        })
+      );
+      s.addExtraButton((btn) =>
+        btn
+          .setIcon("trash")
+          .setTooltip("Çifti sil")
+          .onClick(async () => {
+            this.plugin.settings.pairs =
+              this.plugin.settings.pairs.filter((p) => p !== pair);
+            await this.plugin.saveSettings();
+            this.display();
+          })
+      );
+    }
   }
 }
 
@@ -679,6 +968,82 @@ class SplitNotesPlugin extends Plugin {
         return true;
       }
     });
+
+    /* ---- Yeni: panele gönderme ---- */
+    const sendTo = (side) => {
+      return () => void this.activateViewWithActive(side);
+    };
+    this.addCommand({
+      id: "send-active-left",
+      name: "Aktif notu sol panele gönder",
+      callback: sendTo("left")
+    });
+    this.addCommand({
+      id: "send-active-right",
+      name: "Aktif notu sağ panele gönder",
+      callback: sendTo("right")
+    });
+
+    /* ---- Yeni: çiftler ---- */
+    this.addCommand({
+      id: "save-pair",
+      name: "Mevcut panelleri çift olarak kaydet",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.saveCurrentAsPair();
+        return true;
+      }
+    });
+
+    this.addCommand({
+      id: "load-pair",
+      name: "Kayıtlı çift yükle...",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.pickPair();
+        return true;
+      }
+    });
+
+    /* ---- Yeni: mobil panel odağı ---- */
+    this.addCommand({
+      id: "cycle-focus",
+      name: "Panel odağını değiştir (sol → sağ → ikisi)",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        if (!checking) view.cycleFocus();
+        return true;
+      }
+    });
+
+    /* ---- Yeni: panel geçmişi ---- */
+    this.addCommand({
+      id: "history-back",
+      name: "Son kullanılan panelde geri git",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        const side = view.getLastSide();
+        if (!view.canGoBack(side)) return false;
+        if (!checking) view.navigate(side, -1);
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "history-forward",
+      name: "Son kullanılan panelde ileri git",
+      checkCallback: (checking) => {
+        const view = this.getActiveView();
+        if (!view) return false;
+        const side = view.getLastSide();
+        if (!view.canGoForward(side)) return false;
+        if (!checking) view.navigate(side, 1);
+        return true;
+      }
+    });
   }
 
   onunload() {
@@ -687,6 +1052,7 @@ class SplitNotesPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (!Array.isArray(this.settings.pairs)) this.settings.pairs = [];
   }
 
   async saveSettings() {
@@ -727,10 +1093,15 @@ class SplitNotesPlugin extends Plugin {
     return leaf.view;
   }
 
-  async activateViewWithActive() {
+  async activateViewWithActive(side) {
     const view = await this.activateView();
     const file = this.app.workspace.getActiveFile();
-    if (file) view.setFile("left", file);
+    if (!file) {
+      new Notice("Aktif not yok.");
+      return;
+    }
+    if (side) view.setFile(side, file);
+    else view.setFile("left", file);
   }
 }
 
