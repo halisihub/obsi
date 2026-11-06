@@ -1,9 +1,9 @@
 {
   "id": "split-notes",
   "name": "Çift Not Görünümü",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "minAppVersion": "1.4.0",
-  "description": "İki notu aynı anda görüntüleyin. Gerçek tam ekran, mesafe/esaslı senkron kaydırma, bağlantı hedefi seçeneği, mobil uyumlu.",
+  "description": "İki notu aynı anda görüntüleyin. Çiftler, mobil panel odağı, gezinme geçmişi, gerçek tam ekran ve senkron kaydırma.",
   "author": "halisihub",
   "isDesktopOnly": false
 }
